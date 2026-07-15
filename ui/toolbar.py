@@ -8,6 +8,10 @@ TOOLS = [
     ("eyedropper",  "💧", "Cuentagotas (I)"),
     ("fill",        "🪣", "Relleno (G)"),
     ("selection",   "⬚",  "Selección (S)"),
+    None,   # separador
+    ("line",        "╱",  "Línea (L)"),
+    ("rect",        "▭",  "Rectángulo (R)"),
+    ("ellipse",     "◯",  "Elipse (O)"),
 ]
 
 
@@ -17,7 +21,11 @@ class ToolBar(tk.Frame):
         self.app = app
         self._buttons = {}
 
-        for name, icon, tooltip in TOOLS:
+        for entry in TOOLS:
+            if entry is None:
+                ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4, padx=2)
+                continue
+            name, icon, tooltip = entry
             btn = tk.Button(
                 self, text=icon, width=3, font=("", 14),
                 relief="flat", command=lambda n=name: self.app.select_tool(n),

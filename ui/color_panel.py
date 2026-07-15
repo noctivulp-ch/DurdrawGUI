@@ -1,9 +1,38 @@
 import tkinter as tk
 from tkinter import ttk
-from ui.canvas import ANSI_COLORS
+from ui.canvas import ANSI_COLORS, PALETTE_256
 
-# Tabla ASCII imprimible (32-126 + algunos útiles)
-_CHARS = [chr(c) for c in range(32, 127)] + list("░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■")
+# ── Conjuntos de caracteres ────────────────────────────────────────────────────
+
+_CHARS_STD = (
+    [chr(c) for c in range(32, 127)]
+    + list("░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀"
+           "αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■")
+)
+
+
+def _load_unicode_chars(*block_names):
+    """Carga bloques unicode de durdraw_charsets y devuelve lista de chars."""
+    try:
+        from core.durdraw.durdraw_charsets import load_unicode_block
+    except ImportError:
+        return []
+    chars = []
+    for name in block_names:
+        blocks = load_unicode_block(name) or []
+        for row in blocks:
+            for cp in row.values():
+                if isinstance(cp, int) and cp > 0:
+                    try:
+                        chars.append(chr(cp))
+                    except (ValueError, OverflowError):
+                        pass
+    return chars
+
+
+_CHARS_BLOQUES = _load_unicode_chars("Block Elements", "Box Drawing", "Geometric Shapes")
+_CHARS_BRAILLE = _load_unicode_chars("Braille Patterns")
+_CHARS_FLECHAS = _load_unicode_chars("Arrows", "Miscellaneous Symbols and Arrows")
 
 
 class ColorPanel(tk.Frame):
@@ -30,60 +59,103 @@ class ColorPanel(tk.Frame):
         self._char_label.grid(row=0, column=3, padx=4)
         tk.Label(top, text="Char").grid(row=1, column=3)
 
-        # ── Paleta 16 colores ──────────────────────────────────────────────
-        pal_frame = tk.LabelFrame(self, text="Paleta ANSI")
-        pal_frame.pack(fill="x", padx=4, pady=4)
-
+        # ── Paleta de colores ──────────────────────────────────────────────
+        self._pal_frame = tk.LabelFrame(self, text="Paleta")
+        self._pal_frame.pack(fill="x", padx=4, pady=4)
         self._pal_cells = []
-        for i, hex_color in enumerate(ANSI_COLORS):
-            r, c = divmod(i, 8)
-            cell = tk.Canvas(pal_frame, width=20, height=20, bg=hex_color,
-                             cursor="hand2", bd=0, highlightthickness=1,
-                             highlightbackground="#333")
-            cell.grid(row=r, column=c, padx=1, pady=1)
+        self._build_palette_grid()
+
+        # ── Selector de carácter (notebook) ───────────────────────────────
+        char_outer = tk.LabelFrame(self, text="Carácter")
+        char_outer.pack(fill="both", expand=True, padx=4, pady=4)
+
+        nb = ttk.Notebook(char_outer)
+        nb.pack(fill="both", expand=True)
+
+        self._char_canvases = {}
+        tabs = [
+            ("Std",    _CHARS_STD,    "#EEE"),
+            ("Blq",    _CHARS_BLOQUES, "#CCFFCC"),
+            ("Bra",    _CHARS_BRAILLE, "#CCCCFF"),
+            ("Fle",    _CHARS_FLECHAS, "#FFE0AA"),
+        ]
+        for tab_name, chars, fg_hint in tabs:
+            frame = tk.Frame(nb)
+            nb.add(frame, text=tab_name)
+            cvs = tk.Canvas(frame, bg="#111", bd=0, highlightthickness=0)
+            vsb = ttk.Scrollbar(frame, orient="vertical", command=cvs.yview)
+            cvs.configure(yscrollcommand=vsb.set)
+            vsb.pack(side="right", fill="y")
+            cvs.pack(fill="both", expand=True)
+            self._char_canvases[tab_name] = (cvs, chars, fg_hint)
+            cvs.bind("<Configure>", lambda e, tn=tab_name: self._build_char_grid(tn))
+
+    # ── Paleta de colores ──────────────────────────────────────────────────────
+
+    def _build_palette_grid(self):
+        for w in self._pal_frame.winfo_children():
+            w.destroy()
+        self._pal_cells.clear()
+
+        color_mode = getattr(self.app, 'color_mode', '16')
+
+        if color_mode == "256":
+            palette = PALETTE_256
+            cell_size = 10
+            cols_per_row = 16
+            hint = "Clic=FG  Clic-der=BG  (xterm-256)"
+        else:
+            palette = ANSI_COLORS
+            cell_size = 20
+            cols_per_row = 8
+            hint = "Clic=FG  Clic-der=BG"
+
+        for i, hex_color in enumerate(palette):
+            r, c = divmod(i, cols_per_row)
+            cell = tk.Canvas(self._pal_frame, width=cell_size, height=cell_size,
+                             bg=hex_color, cursor="hand2", bd=0,
+                             highlightthickness=1, highlightbackground="#222")
+            cell.grid(row=r, column=c, padx=0, pady=0)
             cell.bind("<Button-1>", lambda e, idx=i: self.app.set_fg_color(idx))
             cell.bind("<Button-3>", lambda e, idx=i: self.app.set_bg_color(idx))
             self._pal_cells.append(cell)
 
-        tk.Label(pal_frame, text="Clic=FG  Clic-der=BG",
-                 font=("", 8)).grid(row=2, column=0, columnspan=8, pady=2)
-
-        # ── Selector de carácter ───────────────────────────────────────────
-        char_frame = tk.LabelFrame(self, text="Carácter")
-        char_frame.pack(fill="both", expand=True, padx=4, pady=4)
-
-        self._char_canvas = tk.Canvas(char_frame, bg="#111", bd=0,
-                                      highlightthickness=0)
-        vsb = ttk.Scrollbar(char_frame, orient="vertical",
-                            command=self._char_canvas.yview)
-        self._char_canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        self._char_canvas.pack(fill="both", expand=True)
-
-        self._build_char_grid()
-        self._char_canvas.bind("<Configure>", lambda e: self._build_char_grid())
-
-    def _build_char_grid(self):
-        self._char_canvas.delete("all")
-        cw = max(self._char_canvas.winfo_width(), 80)
-        cols = max(1, cw // 16)
-        font = ("Monospace", 10)
-        for i, ch in enumerate(_CHARS):
-            r, c = divmod(i, cols)
-            x = c * 16 + 8
-            y = r * 16 + 8
-            cid = self._char_canvas.create_text(x, y, text=ch, fill="#EEE",
-                                                font=font, anchor="center",
-                                                tags="char")
-            self._char_canvas.tag_bind(
-                cid, "<Button-1>", lambda e, cc=ch: self.app.set_fg_char(cc)
-            )
-        total_rows = (len(_CHARS) + cols - 1) // cols
-        self._char_canvas.configure(
-            scrollregion=(0, 0, cw, total_rows * 16 + 4)
+        hint_rows = (len(palette) + cols_per_row - 1) // cols_per_row
+        tk.Label(self._pal_frame, text=hint, font=("", 7)).grid(
+            row=hint_rows, column=0, columnspan=cols_per_row, pady=2
         )
+
+    def rebuild_palette(self):
+        self._build_palette_grid()
+
+    # ── Cuadrícula de caracteres ───────────────────────────────────────────────
+
+    def _build_char_grid(self, tab_name):
+        cvs, chars, fg_hint = self._char_canvases[tab_name]
+        cvs.delete("all")
+        if not chars:
+            cvs.create_text(60, 30, text="(vacío)", fill="#888",
+                            font=("Monospace", 9))
+            return
+        cw = max(cvs.winfo_width(), 80)
+        cell_px = 14
+        cols = max(1, cw // cell_px)
+        font = ("Monospace", 9)
+        for i, ch in enumerate(chars):
+            r, c_idx = divmod(i, cols)
+            x = c_idx * cell_px + cell_px // 2
+            y = r * cell_px + cell_px // 2
+            cid = cvs.create_text(x, y, text=ch, fill=fg_hint,
+                                   font=font, anchor="center", tags="char")
+            cvs.tag_bind(cid, "<Button-1>",
+                         lambda e, cc=ch: self.app.set_fg_char(cc))
+        total_rows = (len(chars) + cols - 1) // cols
+        cvs.configure(scrollregion=(0, 0, cw, total_rows * cell_px + 4))
+
+    # ── Refresh ───────────────────────────────────────────────────────────────
 
     def refresh(self, fg_char, fg_color, bg_color):
         self._char_label.config(text=fg_char if fg_char != " " else "' '")
-        self._fg_swatch.config(bg=ANSI_COLORS[fg_color % 16])
-        self._bg_swatch.config(bg=ANSI_COLORS[bg_color % 16])
+        palette = PALETTE_256 if getattr(self.app, 'color_mode', '16') == "256" else ANSI_COLORS
+        self._fg_swatch.config(bg=palette[fg_color % len(palette)])
+        self._bg_swatch.config(bg=palette[bg_color % len(palette)])

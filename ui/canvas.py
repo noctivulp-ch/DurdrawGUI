@@ -2,12 +2,22 @@ import tkinter as tk
 import tkinter.font
 from tools.base import ToolState
 
-ANSI_COLORS = [
-    "#000000", "#AA0000", "#00AA00", "#AA5500",
-    "#0000AA", "#AA00AA", "#00AAAA", "#AAAAAA",
-    "#555555", "#FF5555", "#55FF55", "#FFFF55",
-    "#5555FF", "#FF55FF", "#55FFFF", "#FFFFFF",
-]
+
+def _build_palette_256():
+    base = [
+        "#000000", "#AA0000", "#00AA00", "#AA5500",
+        "#0000AA", "#AA00AA", "#00AAAA", "#AAAAAA",
+        "#555555", "#FF5555", "#55FF55", "#FFFF55",
+        "#5555FF", "#FF55FF", "#55FFFF", "#FFFFFF",
+    ]
+    levels = [0, 95, 135, 175, 215, 255]
+    cube = [f"#{r:02X}{g:02X}{b:02X}" for r in levels for g in levels for b in levels]
+    grays = [f"#{v:02X}{v:02X}{v:02X}" for v in range(8, 248, 10)]
+    return base + cube + grays
+
+
+PALETTE_256 = _build_palette_256()
+ANSI_COLORS = PALETTE_256[:16]   # alias backward-compat
 
 _BASE_FONT_SIZE = 14
 _ZOOM_STEPS = [6, 8, 10, 12, 14, 16, 18, 20, 24]
@@ -106,9 +116,27 @@ class AsciiCanvas(tk.Frame):
 
     # ── Renderizado ───────────────────────────────────────────────────────
 
+    def draw_preview(self, cells):
+        """Dibuja celdas de preview (rubber-band) sin tocar el modelo."""
+        self._canvas.delete("preview")
+        for col, row, ch in cells:
+            x, y = self.cell_to_screen(col, row)
+            self._canvas.create_text(
+                x + self.cell_w // 2, y + self.cell_h // 2,
+                text=ch, fill="#00FF88",
+                font=self._font, anchor="center", tags="preview"
+            )
+        self._canvas.lift("overlay")
+
+    def clear_preview(self):
+        self._canvas.delete("preview")
+
+    # ── Renderizado ───────────────────────────────────────────────────────
+
     def render_frame(self, frame):
         self._canvas.delete("cell")
         self._canvas.delete("grid")
+        self._canvas.delete("preview")
         self._items.clear()
         self._cursor_box = self._canvas.create_rectangle(
             0, 0, 0, 0, outline="#FFFFFF", width=1, state="hidden", tags="overlay"
@@ -134,9 +162,9 @@ class AsciiCanvas(tk.Frame):
             rid, tid = self._items[(col, row)]
             x, y = self.cell_to_screen(col, row)
             self._canvas.coords(rid, x, y, x + self.cell_w, y + self.cell_h)
-            self._canvas.itemconfig(rid, fill=ANSI_COLORS[bg % 16])
+            self._canvas.itemconfig(rid, fill=PALETTE_256[bg % 256])
             self._canvas.coords(tid, x + self.cell_w // 2, y + self.cell_h // 2)
-            self._canvas.itemconfig(tid, text=ch, fill=ANSI_COLORS[fg % 16],
+            self._canvas.itemconfig(tid, text=ch, fill=PALETTE_256[fg % 256],
                                     font=self._font)
         else:
             self._draw_cell(col, row, ch, fg, bg)
@@ -146,11 +174,11 @@ class AsciiCanvas(tk.Frame):
         x, y = self.cell_to_screen(col, row)
         rid = self._canvas.create_rectangle(
             x, y, x + self.cell_w, y + self.cell_h,
-            fill=ANSI_COLORS[bg % 16], outline="", tags="cell"
+            fill=PALETTE_256[bg % 256], outline="", tags="cell"
         )
         tid = self._canvas.create_text(
             x + self.cell_w // 2, y + self.cell_h // 2,
-            text=ch, fill=ANSI_COLORS[fg % 16],
+            text=ch, fill=PALETTE_256[fg % 256],
             font=self._font, anchor="center", tags="cell"
         )
         self._items[(col, row)] = (rid, tid)

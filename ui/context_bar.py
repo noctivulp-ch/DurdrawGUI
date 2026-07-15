@@ -44,6 +44,16 @@ class ContextBar(tk.Frame):
         tk.Label(p4, text="Cuentagotas — clic para tomar char+color").pack(side="left", padx=6)
         self._panels["eyedropper"] = p4
 
+        # ── Panel: herramientas de forma (línea / rectángulo / elipse) ────
+        p5 = tk.Frame(self)
+        tk.Label(p5, text="Modo:").pack(side="left", padx=(6, 2))
+        self._shape_filled = tk.BooleanVar(value=False)
+        tk.Radiobutton(p5, text="Borde",   value=False, variable=self._shape_filled).pack(side="left")
+        tk.Radiobutton(p5, text="Relleno", value=True,  variable=self._shape_filled).pack(side="left")
+        self._panels["line"]    = p5
+        self._panels["rect"]    = p5
+        self._panels["ellipse"] = p5
+
         # ── Info de zoom (siempre visible, lado derecho) ──────────────────
         right = tk.Frame(self)
         right.pack(side="right", padx=8)
@@ -71,3 +81,7 @@ class ContextBar(tk.Frame):
     @property
     def brush_size(self):
         return self._brush_size.get()
+
+    @property
+    def shape_filled(self):
+        return self._shape_filled.get()

@@ -14,6 +14,9 @@ from tools.eraser     import EraserTool
 from tools.eyedropper import EyedropperTool
 from tools.fill       import FillTool
 from tools.selection  import SelectionTool
+from tools.line       import LineTool
+from tools.rect       import RectTool
+from tools.ellipse    import EllipseTool
 from ui.canvas      import AsciiCanvas
 from ui.toolbar     import ToolBar
 from ui.color_panel import ColorPanel
@@ -31,6 +34,53 @@ class _Opts:
         self.sizeY = h
 
 
+class NewCanvasDialog(tk.Toplevel):
+    """Diálogo modal para configurar un nuevo lienzo."""
+
+    def __init__(self, parent, current_w=DEFAULT_W, current_h=DEFAULT_H,
+                 current_mode="16"):
+        super().__init__(parent)
+        self.title("Nuevo lienzo")
+        self.resizable(False, False)
+        self.result = None
+
+        tk.Label(self, text="Ancho:").grid(row=0, column=0, padx=10, pady=6, sticky="e")
+        self._w = tk.IntVar(value=current_w)
+        ttk.Spinbox(self, from_=10, to=500, textvariable=self._w,
+                    width=7).grid(row=0, column=1, padx=10, pady=6)
+
+        tk.Label(self, text="Alto:").grid(row=1, column=0, padx=10, pady=6, sticky="e")
+        self._h = tk.IntVar(value=current_h)
+        ttk.Spinbox(self, from_=4, to=300, textvariable=self._h,
+                    width=7).grid(row=1, column=1, padx=10, pady=6)
+
+        tk.Label(self, text="Colores:").grid(row=2, column=0, padx=10, pady=6, sticky="e")
+        self._mode = tk.StringVar(value=current_mode)
+        modes = tk.Frame(self)
+        tk.Radiobutton(modes, text="16 ANSI",   value="16",  variable=self._mode).pack(side="left")
+        tk.Radiobutton(modes, text="256 xterm", value="256", variable=self._mode).pack(side="left")
+        modes.grid(row=2, column=1, padx=10)
+
+        btn_f = tk.Frame(self)
+        btn_f.grid(row=3, column=0, columnspan=2, pady=10)
+        tk.Button(btn_f, text="Aceptar",  command=self._ok).pack(side="left", padx=6)
+        tk.Button(btn_f, text="Cancelar", command=self.destroy).pack(side="left", padx=6)
+
+        self.transient(parent)
+        self.grab_set()
+        self.bind("<Return>", lambda e: self._ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        parent.wait_window(self)
+
+    def _ok(self):
+        self.result = {
+            'width':      self._w.get(),
+            'height':     self._h.get(),
+            'color_mode': self._mode.get(),
+        }
+        self.destroy()
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -38,11 +88,12 @@ class App:
         root.minsize(900, 600)
 
         # ── Estado global ──────────────────────────────────────────────────
-        self.movie     = Movie(_Opts(DEFAULT_W, DEFAULT_H))
-        self.history   = CommandHistory()
-        self.fg_char   = "@"
-        self.fg_color  = 15
-        self.bg_color  = 0
+        self.color_mode = "16"
+        self.movie      = Movie(_Opts(DEFAULT_W, DEFAULT_H))
+        self.history    = CommandHistory()
+        self.fg_char    = "@"
+        self.fg_color   = 15
+        self.bg_color   = 0
 
         # Selección y portapapeles
         self._sel_rect = None   # (c0, r0, c1, r1)
@@ -58,6 +109,9 @@ class App:
             "eyedropper": EyedropperTool(self),
             "fill":       FillTool(self),
             "selection":  SelectionTool(self),
+            "line":       LineTool(self),
+            "rect":       RectTool(self),
+            "ellipse":    EllipseTool(self),
         }
         self.active_tool = self._tools["pencil"]
 
@@ -107,7 +161,7 @@ class App:
 
         fm = tk.Menu(mb, tearoff=0)
         mb.add_cascade(label="Archivo", menu=fm)
-        fm.add_command(label="Nuevo",           command=self.new_file,    accelerator="Ctrl+N")
+        fm.add_command(label="Nuevo lienzo…",   command=self.new_file,    accelerator="Ctrl+N")
         fm.add_command(label="Abrir…",          command=self.open_file,   accelerator="Ctrl+O")
         fm.add_command(label="Guardar…",        command=self.save,        accelerator="Ctrl+S")
         fm.add_separator()
@@ -146,6 +200,10 @@ class App:
         self._grid_var = tk.BooleanVar(value=False)
         vm.add_checkbutton(label="Mostrar rejilla", variable=self._grid_var,
                            command=self._toggle_grid)
+        vm.add_separator()
+        self._color256_var = tk.BooleanVar(value=False)
+        vm.add_checkbutton(label="Modo 256 colores", variable=self._color256_var,
+                           command=self._toggle_color_mode)
 
     # ── Atajos de teclado ──────────────────────────────────────────────────
 
@@ -185,6 +243,9 @@ class App:
         r.bind("g",                lambda e: self.select_tool("fill"))
         r.bind("s",                lambda e: self.select_tool("selection"))
         r.bind("x",                lambda e: self.swap_colors())
+        r.bind("l",                lambda e: self.select_tool("line"))
+        r.bind("r",                lambda e: self.select_tool("rect"))
+        r.bind("o",                lambda e: self.select_tool("ellipse"))
         r.bind("<Alt-n>",          lambda e: self.add_frame())
         r.bind("<Alt-d>",          lambda e: self.duplicate_frame())
         r.bind("<Alt-c>",          lambda e: self.delete_frame())
@@ -262,6 +323,11 @@ class App:
     def _toggle_grid(self):
         self._show_grid = self._grid_var.get()
         self.canvas_widget.render_frame(self.current_frame())
+
+    def _toggle_color_mode(self):
+        self.color_mode = "256" if self._color256_var.get() else "16"
+        self.color_panel.rebuild_palette()
+        self._refresh_color_panel()
 
     # ── Selección ──────────────────────────────────────────────────────────
 
@@ -425,13 +491,27 @@ class App:
     # ── Archivo ────────────────────────────────────────────────────────────
 
     def new_file(self):
+        dlg = NewCanvasDialog(
+            self.root,
+            current_w=self.movie.sizeX,
+            current_h=self.movie.sizeY,
+            current_mode=self.color_mode,
+        )
+        if dlg.result is None:
+            return
+        w = dlg.result['width']
+        h = dlg.result['height']
+        self.color_mode = dlg.result['color_mode']
+        self._color256_var.set(self.color_mode == "256")
         self.timeline.stop_play()
-        self.movie     = Movie(_Opts(DEFAULT_W, DEFAULT_H))
+        self.movie     = Movie(_Opts(w, h))
         self.history   = CommandHistory()
         self._sel_rect = None
         self.clipboard = None
+        self.color_panel.rebuild_palette()
         self.canvas_widget.render_frame(self.current_frame())
         self._refresh_timeline()
+        self._refresh_color_panel()
         self.root.title("DurdrawGUI")
 
     def open_file(self):
