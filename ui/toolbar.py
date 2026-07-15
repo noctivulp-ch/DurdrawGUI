@@ -7,6 +7,7 @@ TOOLS = [
     ("eraser",      "⬜", "Borrador (E)"),
     ("eyedropper",  "💧", "Cuentagotas (I)"),
     ("fill",        "🪣", "Relleno (G)"),
+    ("selection",   "⬚",  "Selección (S)"),
 ]
 
 

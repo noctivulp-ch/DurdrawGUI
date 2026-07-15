@@ -29,12 +29,17 @@ class PencilTool:
 
     def _paint(self, col, row, button):
         frame = self.app.current_frame()
-        if not (0 <= col < frame.width and 0 <= row < frame.height):
-            return
         ch, fg, bg = self.app.fg_char, self.app.fg_color, self.app.bg_color
-        frame.content[row][col]      = ch
-        frame.newColorMap[row][col]  = [fg, bg]
-        self.app.canvas_widget.update_cell(col, row, ch, fg, bg)
+        size = getattr(self.app, 'context_bar', None)
+        size = size.brush_size if size else 1
+        half = size // 2
+        for dr in range(-half, size - half):
+            for dc in range(-half, size - half):
+                r, c = row + dr, col + dc
+                if 0 <= c < frame.width and 0 <= r < frame.height:
+                    frame.content[r][c]     = ch
+                    frame.newColorMap[r][c] = [fg, bg]
+                    self.app.canvas_widget.update_cell(c, r, ch, fg, bg)
         self._prev_cell = (col, row)
 
     def _push_undo(self):

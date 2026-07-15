@@ -29,11 +29,16 @@ class EraserTool:
 
     def _erase(self, col, row):
         frame = self.app.current_frame()
-        if not (0 <= col < frame.width and 0 <= row < frame.height):
-            return
-        frame.content[row][col]     = " "
-        frame.newColorMap[row][col] = [7, 0]
-        self.app.canvas_widget.update_cell(col, row, " ", 7, 0)
+        size = getattr(self.app, 'context_bar', None)
+        size = size.brush_size if size else 1
+        half = size // 2
+        for dr in range(-half, size - half):
+            for dc in range(-half, size - half):
+                r, c = row + dr, col + dc
+                if 0 <= c < frame.width and 0 <= r < frame.height:
+                    frame.content[r][c]     = " "
+                    frame.newColorMap[r][c] = [7, 0]
+                    self.app.canvas_widget.update_cell(c, r, " ", 7, 0)
         self._prev_cell = (col, row)
 
     def _push_undo(self):

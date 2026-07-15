@@ -1,29 +1,16 @@
 import tkinter as tk
-from copy import deepcopy
+import tkinter.font
 from tools.base import ToolState
 
-# Paleta ANSI 16 colores (índice durdraw → hex)
 ANSI_COLORS = [
-    "#000000",  # 0  negro
-    "#AA0000",  # 1  rojo oscuro
-    "#00AA00",  # 2  verde oscuro
-    "#AA5500",  # 3  marrón/amarillo oscuro
-    "#0000AA",  # 4  azul oscuro
-    "#AA00AA",  # 5  magenta oscuro
-    "#00AAAA",  # 6  cian oscuro
-    "#AAAAAA",  # 7  gris claro
-    "#555555",  # 8  gris oscuro (negro brillante)
-    "#FF5555",  # 9  rojo brillante
-    "#55FF55",  # 10 verde brillante
-    "#FFFF55",  # 11 amarillo brillante
-    "#5555FF",  # 12 azul brillante
-    "#FF55FF",  # 13 magenta brillante
-    "#55FFFF",  # 14 cian brillante
-    "#FFFFFF",  # 15 blanco
+    "#000000", "#AA0000", "#00AA00", "#AA5500",
+    "#0000AA", "#AA00AA", "#00AAAA", "#AAAAAA",
+    "#555555", "#FF5555", "#55FF55", "#FFFF55",
+    "#5555FF", "#FF55FF", "#55FFFF", "#FFFFFF",
 ]
 
-FONT_NAME  = "Monospace"
-FONT_SIZE  = 14
+_BASE_FONT_SIZE = 14
+_ZOOM_STEPS = [6, 8, 10, 12, 14, 16, 18, 20, 24]
 
 
 class AsciiCanvas(tk.Frame):
@@ -31,77 +18,129 @@ class AsciiCanvas(tk.Frame):
         super().__init__(parent, **kwargs)
         self.app = app
 
-        self._font     = tk.font.Font(family=FONT_NAME, size=FONT_SIZE)
-        self.cell_w    = self._font.measure("X")
-        self.cell_h    = self._font.metrics("linespace")
-        self.view_col  = 0   # desplazamiento de vista (scroll)
+        self._zoom_idx = _ZOOM_STEPS.index(_BASE_FONT_SIZE)
+        self._font     = None
+        self.cell_w    = 0
+        self.cell_h    = 0
+        self.view_col  = 0
         self.view_row  = 0
-        self._cursor_cell = None  # (col, row) celda bajo el cursor
+        self._cursor_cell = None
+        self._sel_rect    = None   # (c0,r0,c1,r1) selección activa
 
-        self._canvas   = tk.Canvas(self, bg="#000000", cursor="none",
-                                   highlightthickness=0)
+        self._canvas = tk.Canvas(self, bg="#000000", cursor="none",
+                                 highlightthickness=0)
         self._canvas.pack(fill="both", expand=True)
 
-        # Diccionario de items: (col, row) → (rect_id, text_id)
-        self._items = {}
-        # Overlay del cursor (resaltado de celda)
-        self._cursor_rect = self._canvas.create_rectangle(
-            0, 0, 0, 0, outline="#FFFFFF", width=1, state="hidden"
-        )
+        # Items de canvas
+        self._items      = {}   # (col,row) → (rect_id, text_id)
+        self._cursor_box = None
+        self._sel_box    = None
+        self._paste_box  = None
 
         self._state = ToolState(self)
+        self._apply_zoom()
+        self._bind_events()
 
-        self._canvas.bind("<ButtonPress-1>",   lambda e: self._state.mouse_down(e, 1))
-        self._canvas.bind("<ButtonPress-2>",   lambda e: self._state.mouse_down(e, 2))
-        self._canvas.bind("<ButtonPress-3>",   lambda e: self._state.mouse_down(e, 3))
-        self._canvas.bind("<B1-Motion>",       lambda e: self._state.mouse_move(e))
-        self._canvas.bind("<B2-Motion>",       lambda e: self._state.mouse_move(e))
-        self._canvas.bind("<Motion>",          lambda e: self._state.mouse_move(e))
-        self._canvas.bind("<ButtonRelease-1>", lambda e: self._state.mouse_up(e, 1))
-        self._canvas.bind("<ButtonRelease-2>", lambda e: self._state.mouse_up(e, 2))
-        self._canvas.bind("<ButtonRelease-3>", lambda e: self._state.mouse_up(e, 3))
-        self._canvas.bind("<Leave>",           lambda e: self._state.mouse_leave(e))
+    # ── Zoom ──────────────────────────────────────────────────────────────
 
-    # ── Coordenadas ───────────────────────────────────────────────────────────
+    def _apply_zoom(self):
+        size = _ZOOM_STEPS[self._zoom_idx]
+        self._font  = tk.font.Font(family="Monospace", size=size)
+        self.cell_w = self._font.measure("X")
+        self.cell_h = self._font.metrics("linespace")
+        pct = int(size / _BASE_FONT_SIZE * 100)
+        if hasattr(self, 'app') and self.app:
+            if hasattr(self.app, 'context_bar'):
+                self.app.context_bar.set_zoom(pct)
+        return pct
+
+    def zoom_in(self):
+        if self._zoom_idx < len(_ZOOM_STEPS) - 1:
+            self._zoom_idx += 1
+            self._apply_zoom()
+            self.render_frame(self.app.current_frame())
+        return int(_ZOOM_STEPS[self._zoom_idx] / _BASE_FONT_SIZE * 100)
+
+    def zoom_out(self):
+        if self._zoom_idx > 0:
+            self._zoom_idx -= 1
+            self._apply_zoom()
+            self.render_frame(self.app.current_frame())
+        return int(_ZOOM_STEPS[self._zoom_idx] / _BASE_FONT_SIZE * 100)
+
+    def zoom_reset(self):
+        self._zoom_idx = _ZOOM_STEPS.index(_BASE_FONT_SIZE)
+        self._apply_zoom()
+        self.render_frame(self.app.current_frame())
+        return 100
+
+    # ── Bindings ──────────────────────────────────────────────────────────
+
+    def _bind_events(self):
+        c = self._canvas
+        c.bind("<ButtonPress-1>",   lambda e: self._state.mouse_down(e, 1))
+        c.bind("<ButtonPress-2>",   lambda e: self._state.mouse_down(e, 2))
+        c.bind("<ButtonPress-3>",   lambda e: self._state.mouse_down(e, 3))
+        c.bind("<B1-Motion>",       lambda e: self._state.mouse_move(e))
+        c.bind("<B2-Motion>",       lambda e: self._state.mouse_move(e))
+        c.bind("<B3-Motion>",       lambda e: self._state.mouse_move(e))
+        c.bind("<Motion>",          lambda e: self._state.mouse_move(e))
+        c.bind("<ButtonRelease-1>", lambda e: self._state.mouse_up(e, 1))
+        c.bind("<ButtonRelease-2>", lambda e: self._state.mouse_up(e, 2))
+        c.bind("<ButtonRelease-3>", lambda e: self._state.mouse_up(e, 3))
+        c.bind("<Leave>",           lambda e: self._state.mouse_leave(e))
+        c.bind("<MouseWheel>",      lambda e: self._state.mouse_wheel(e))
+        c.bind("<Button-4>",        lambda e: self._state.mouse_wheel(e))
+        c.bind("<Button-5>",        lambda e: self._state.mouse_wheel(e))
+        # Espacio para pan: el canvas necesita foco
+        c.bind("<KeyPress>",        lambda e: self._state.key_press(e))
+        c.bind("<KeyRelease>",      lambda e: self._state.key_release(e))
+        c.bind("<ButtonPress-1>",   lambda e: (c.focus_set(),
+                                               self._state.mouse_down(e, 1)),
+               add="+")
+
+    # ── Coordenadas ───────────────────────────────────────────────────────
 
     def screen_to_cell(self, sx, sy):
-        col = sx // self.cell_w + self.view_col
-        row = sy // self.cell_h + self.view_row
-        return col, row
+        return sx // self.cell_w + self.view_col, sy // self.cell_h + self.view_row
 
     def cell_to_screen(self, col, row):
-        x = (col - self.view_col) * self.cell_w
-        y = (row - self.view_row) * self.cell_h
-        return x, y
+        return (col - self.view_col) * self.cell_w, (row - self.view_row) * self.cell_h
 
-    # ── Renderizado ───────────────────────────────────────────────────────────
+    # ── Renderizado ───────────────────────────────────────────────────────
 
     def render_frame(self, frame):
-        """Redibuja todo el frame actual."""
         self._canvas.delete("cell")
         self._items.clear()
+        self._cursor_box = self._canvas.create_rectangle(
+            0, 0, 0, 0, outline="#FFFFFF", width=1, state="hidden", tags="overlay"
+        )
+        self._sel_box = self._canvas.create_rectangle(
+            0, 0, 0, 0, outline="#FFFF00", width=1,
+            dash=(4, 3), state="hidden", tags="overlay"
+        )
+        self._paste_box = self._canvas.create_rectangle(
+            0, 0, 0, 0, outline="#00FF88", width=1,
+            dash=(4, 3), state="hidden", tags="overlay"
+        )
         for row in range(frame.height):
             for col in range(frame.width):
-                ch  = frame.content[row][col]
-                fg, bg = frame.newColorMap[row][col]
-                self._draw_cell(col, row, ch, fg, bg)
-        self._canvas.lift(self._cursor_rect)
+                self._draw_cell(col, row,
+                                frame.content[row][col],
+                                *frame.newColorMap[row][col])
 
     def update_cell(self, col, row, ch, fg, bg):
-        """Actualiza una sola celda sin redibujar todo el canvas."""
         if (col, row) in self._items:
-            rect_id, text_id = self._items[(col, row)]
+            rid, tid = self._items[(col, row)]
             x, y = self.cell_to_screen(col, row)
-            self._canvas.coords(rect_id, x, y,
-                                x + self.cell_w, y + self.cell_h)
-            self._canvas.itemconfig(rect_id, fill=ANSI_COLORS[bg % 16])
-            self._canvas.coords(text_id, x + self.cell_w // 2,
-                                y + self.cell_h // 2)
-            self._canvas.itemconfig(text_id, text=ch,
-                                    fill=ANSI_COLORS[fg % 16])
+            self._canvas.coords(rid, x, y, x + self.cell_w, y + self.cell_h)
+            self._canvas.itemconfig(rid, fill=ANSI_COLORS[bg % 16])
+            self._canvas.coords(tid, x + self.cell_w // 2, y + self.cell_h // 2)
+            self._canvas.itemconfig(tid, text=ch, fill=ANSI_COLORS[fg % 16],
+                                    font=self._font)
         else:
             self._draw_cell(col, row, ch, fg, bg)
-        self._canvas.lift(self._cursor_rect)
+        self._canvas.lift("overlay")
 
     def _draw_cell(self, col, row, ch, fg, bg):
         x, y = self.cell_to_screen(col, row)
@@ -116,15 +155,15 @@ class AsciiCanvas(tk.Frame):
         )
         self._items[(col, row)] = (rid, tid)
 
-    # ── Scroll ────────────────────────────────────────────────────────────────
+    # ── Scroll / vista ────────────────────────────────────────────────────
 
     def set_view(self, col, row):
         frame = self.app.current_frame()
-        self.view_col = max(0, min(col, frame.width  - 1))
-        self.view_row = max(0, min(row, frame.height - 1))
+        self.view_col = max(0, min(col, max(0, frame.width  - 1)))
+        self.view_row = max(0, min(row, max(0, frame.height - 1)))
         self.render_frame(frame)
 
-    # ── Cursor / highlight ────────────────────────────────────────────────────
+    # ── Cursor ────────────────────────────────────────────────────────────
 
     def update_cursor(self, event):
         col, row = self.screen_to_cell(event.x, event.y)
@@ -135,18 +174,51 @@ class AsciiCanvas(tk.Frame):
             return
         self._cursor_cell = (col, row)
         x, y = self.cell_to_screen(col, row)
-        self._canvas.coords(self._cursor_rect,
-                            x, y, x + self.cell_w, y + self.cell_h)
-        self._canvas.itemconfig(self._cursor_rect, state="normal")
-        ch  = frame.content[row][col]
+        if self._cursor_box:
+            self._canvas.coords(self._cursor_box, x, y,
+                                x + self.cell_w, y + self.cell_h)
+            self._canvas.itemconfig(self._cursor_box, state="normal")
+        ch     = frame.content[row][col]
         fg, bg = frame.newColorMap[row][col]
         self.app.statusbar.set_pos(col, row, ch, fg, bg)
+        # Mostrar preview del paste si hay clipboard
+        if self.app.clipboard is not None and self.app.active_tool.name == "selection":
+            self._update_paste_preview(col, row)
 
     def clear_cursor_highlight(self):
         self._cursor_cell = None
-        self._canvas.itemconfig(self._cursor_rect, state="hidden")
+        if self._cursor_box:
+            self._canvas.itemconfig(self._cursor_box, state="hidden")
 
-    # ── Tool callbacks (llamados desde ToolState) ─────────────────────────────
+    # ── Selección visual ──────────────────────────────────────────────────
+
+    def set_selection(self, c0, r0, c1, r1):
+        self._sel_rect = (c0, r0, c1, r1)
+        if not self._sel_box:
+            return
+        x0, y0 = self.cell_to_screen(c0, r0)
+        x1, y1 = self.cell_to_screen(c1 + 1, r1 + 1)
+        self._canvas.coords(self._sel_box, x0, y0, x1, y1)
+        self._canvas.itemconfig(self._sel_box, state="normal")
+
+    def clear_selection(self):
+        self._sel_rect = None
+        if self._sel_box:
+            self._canvas.itemconfig(self._sel_box, state="hidden")
+        if self._paste_box:
+            self._canvas.itemconfig(self._paste_box, state="hidden")
+
+    def _update_paste_preview(self, col, row):
+        if not self.app.clipboard or not self._paste_box:
+            return
+        rows = len(self.app.clipboard)
+        cols = len(self.app.clipboard[0]) if rows else 0
+        x0, y0 = self.cell_to_screen(col, row)
+        x1, y1 = self.cell_to_screen(col + cols, row + rows)
+        self._canvas.coords(self._paste_box, x0, y0, x1, y1)
+        self._canvas.itemconfig(self._paste_box, state="normal")
+
+    # ── Tool callbacks ────────────────────────────────────────────────────
 
     def tool_start(self, event, button):
         col, row = self.screen_to_cell(event.x, event.y)
