@@ -16,19 +16,25 @@ class EraserTool:
             deepcopy(frame.newColorMap),
         )
         self._prev_cell = None
-        self._erase(col, row)
+        self._button = button
+        self._erase(col, row, button)
 
     def on_drag(self, col, row):
         if (col, row) == self._prev_cell:
             return
-        self._erase(col, row)
+        self._erase(col, row, self._button)
 
     def on_end(self, col, row, button):
         self._push_undo()
         self._prev_cell = None
 
-    def _erase(self, col, row):
+    def _erase(self, col, row, button=1):
         frame = self.app.current_frame()
+        # Botón derecho: pinta con fg_color como fondo (bloque sólido de color)
+        if button == 3:
+            ch, fg, bg = self.app.fg_char, self.app.fg_color, self.app.bg_color
+        else:
+            ch, fg, bg = " ", 7, 0
         size = getattr(self.app, 'context_bar', None)
         size = size.brush_size if size else 1
         half = size // 2
@@ -36,9 +42,9 @@ class EraserTool:
             for dc in range(-half, size - half):
                 r, c = row + dr, col + dc
                 if 0 <= c < frame.width and 0 <= r < frame.height:
-                    frame.content[r][c]     = " "
-                    frame.newColorMap[r][c] = [7, 0]
-                    self.app.canvas_widget.update_cell(c, r, " ", 7, 0)
+                    frame.content[r][c]     = ch
+                    frame.newColorMap[r][c] = [fg, bg]
+                    self.app.canvas_widget.update_cell(c, r, ch, fg, bg)
         self._prev_cell = (col, row)
 
     def _push_undo(self):

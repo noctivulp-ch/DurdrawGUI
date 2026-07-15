@@ -16,12 +16,13 @@ class PencilTool:
             deepcopy(frame.newColorMap),
         )
         self._prev_cell = None
+        self._button = button
         self._paint(col, row, button)
 
     def on_drag(self, col, row):
         if (col, row) == self._prev_cell:
             return
-        self._paint(col, row, 1)
+        self._paint(col, row, self._button)
 
     def on_end(self, col, row, button):
         self._push_undo()
@@ -29,7 +30,12 @@ class PencilTool:
 
     def _paint(self, col, row, button):
         frame = self.app.current_frame()
-        ch, fg, bg = self.app.fg_char, self.app.fg_color, self.app.bg_color
+        ch = self.app.fg_char
+        # Botón derecho: colores invertidos (color BG como tinta)
+        if button == 3:
+            fg, bg = self.app.bg_color, self.app.fg_color
+        else:
+            fg, bg = self.app.fg_color, self.app.bg_color
         size = getattr(self.app, 'context_bar', None)
         size = size.brush_size if size else 1
         half = size // 2

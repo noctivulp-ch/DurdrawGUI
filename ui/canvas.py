@@ -78,7 +78,8 @@ class AsciiCanvas(tk.Frame):
 
     def _bind_events(self):
         c = self._canvas
-        c.bind("<ButtonPress-1>",   lambda e: self._state.mouse_down(e, 1))
+        # ButtonPress-1 incluye focus_set en un solo bind para evitar doble mouse_down
+        c.bind("<ButtonPress-1>",   lambda e: (c.focus_set(), self._state.mouse_down(e, 1)))
         c.bind("<ButtonPress-2>",   lambda e: self._state.mouse_down(e, 2))
         c.bind("<ButtonPress-3>",   lambda e: self._state.mouse_down(e, 3))
         c.bind("<B1-Motion>",       lambda e: self._state.mouse_move(e))
@@ -92,12 +93,8 @@ class AsciiCanvas(tk.Frame):
         c.bind("<MouseWheel>",      lambda e: self._state.mouse_wheel(e))
         c.bind("<Button-4>",        lambda e: self._state.mouse_wheel(e))
         c.bind("<Button-5>",        lambda e: self._state.mouse_wheel(e))
-        # Espacio para pan: el canvas necesita foco
         c.bind("<KeyPress>",        lambda e: self._state.key_press(e))
         c.bind("<KeyRelease>",      lambda e: self._state.key_release(e))
-        c.bind("<ButtonPress-1>",   lambda e: (c.focus_set(),
-                                               self._state.mouse_down(e, 1)),
-               add="+")
 
     # ── Coordenadas ───────────────────────────────────────────────────────
 
@@ -111,6 +108,7 @@ class AsciiCanvas(tk.Frame):
 
     def render_frame(self, frame):
         self._canvas.delete("cell")
+        self._canvas.delete("grid")
         self._items.clear()
         self._cursor_box = self._canvas.create_rectangle(
             0, 0, 0, 0, outline="#FFFFFF", width=1, state="hidden", tags="overlay"
@@ -128,6 +126,8 @@ class AsciiCanvas(tk.Frame):
                 self._draw_cell(col, row,
                                 frame.content[row][col],
                                 *frame.newColorMap[row][col])
+        if getattr(self.app, '_show_grid', False):
+            self._draw_grid(frame)
 
     def update_cell(self, col, row, ch, fg, bg):
         if (col, row) in self._items:
@@ -154,6 +154,17 @@ class AsciiCanvas(tk.Frame):
             font=self._font, anchor="center", tags="cell"
         )
         self._items[(col, row)] = (rid, tid)
+
+    def _draw_grid(self, frame):
+        w = frame.width  * self.cell_w
+        h = frame.height * self.cell_h
+        for col in range(frame.width + 1):
+            x = col * self.cell_w
+            self._canvas.create_line(x, 0, x, h, fill="#2a2a2a", tags="grid")
+        for row in range(frame.height + 1):
+            y = row * self.cell_h
+            self._canvas.create_line(0, y, w, y, fill="#2a2a2a", tags="grid")
+        self._canvas.lift("overlay")
 
     # ── Scroll / vista ────────────────────────────────────────────────────
 

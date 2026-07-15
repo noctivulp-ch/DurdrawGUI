@@ -124,7 +124,8 @@ class App:
         em.add_command(label="Cortar",    command=self.cut_selection,     accelerator="Ctrl+X")
         em.add_command(label="Pegar",     command=self.paste_clipboard,   accelerator="Ctrl+V")
         em.add_separator()
-        em.add_command(label="Seleccionar todo", command=self.select_all, accelerator="Ctrl+A")
+        em.add_command(label="Seleccionar todo",  command=self.select_all, accelerator="Ctrl+A")
+        em.add_command(label="Deseleccionar",     command=self.deselect,   accelerator="Ctrl+D / Esc")
 
         frm = tk.Menu(mb, tearoff=0)
         mb.add_cascade(label="Frame", menu=frm)
@@ -139,7 +140,8 @@ class App:
         mb.add_cascade(label="Vista", menu=vm)
         vm.add_command(label="Acercar",         command=self.zoom_in,    accelerator="Ctrl++")
         vm.add_command(label="Alejar",          command=self.zoom_out,   accelerator="Ctrl+-")
-        vm.add_command(label="Zoom 1:1",        command=self.zoom_reset, accelerator="Ctrl+0")
+        vm.add_command(label="Zoom 1:1 (100%)", command=self.zoom_reset, accelerator="1")
+        vm.add_command(label="Zoom mínimo",     command=lambda: self._zoom_to_index(0), accelerator="~")
         vm.add_separator()
         self._grid_var = tk.BooleanVar(value=False)
         vm.add_checkbutton(label="Mostrar rejilla", variable=self._grid_var,
@@ -162,6 +164,14 @@ class App:
         r.bind("<Control-plus>",   lambda e: self.zoom_in())
         r.bind("<Control-minus>",  lambda e: self.zoom_out())
         r.bind("<Control-0>",      lambda e: self.zoom_reset())
+        # Atajos numéricos de zoom (1=100%, 2=siguiente, etc.)
+        r.bind("1",  lambda e: self.canvas_widget.zoom_reset())
+        r.bind("2",  lambda e: self._zoom_to_index(5))   # 16px ≈ 114%
+        r.bind("3",  lambda e: self._zoom_to_index(6))   # 18px ≈ 129%
+        r.bind("4",  lambda e: self._zoom_to_index(7))   # 20px ≈ 143%
+        r.bind("5",  lambda e: self._zoom_to_index(8))   # 24px ≈ 171%
+        r.bind("grave", lambda e: self._zoom_to_index(0))  # ~ = mínimo
+        r.bind("<Control-d>",      lambda e: self.deselect())
         r.bind("<Left>",           lambda e: self.prev_frame())
         r.bind("<Right>",          lambda e: self.next_frame())
         r.bind("<Home>",           lambda e: self.goto_first_frame())
@@ -239,6 +249,13 @@ class App:
 
     def zoom_reset(self):
         self.canvas_widget.zoom_reset()
+
+    def _zoom_to_index(self, idx):
+        from ui.canvas import _ZOOM_STEPS
+        while self.canvas_widget._zoom_idx < idx:
+            self.canvas_widget.zoom_in()
+        while self.canvas_widget._zoom_idx > idx:
+            self.canvas_widget.zoom_out()
 
     # ── Rejilla ────────────────────────────────────────────────────────────
 
