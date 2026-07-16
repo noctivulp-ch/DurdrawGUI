@@ -1,66 +1,75 @@
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QSlider
+from PySide6.QtCore    import Qt, QTimer
 
 
-class Timeline(tk.Frame):
+class Timeline(QWidget):
     def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, bd=1, relief="raised", **kwargs)
+        super().__init__(parent)
         self.app = app
-        self._play_job = None
+        self.setFixedHeight(36)
+        self._playing  = False
+        self._timer    = QTimer(self)
+        self._timer.timeout.connect(self._tick)
 
-        # Controles de reproducción
-        ctrl = tk.Frame(self)
-        ctrl.pack(side="left", padx=4)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(4)
 
-        tk.Button(ctrl, text="|◀", width=2, command=self.app.goto_first_frame).grid(row=0, column=0)
-        tk.Button(ctrl, text="◀",  width=2, command=self.app.prev_frame).grid(row=0, column=1)
-        self._play_btn = tk.Button(ctrl, text="▶", width=2, command=self._toggle_play)
-        self._play_btn.grid(row=0, column=2)
-        tk.Button(ctrl, text="▶|", width=2, command=self.app.goto_last_frame).grid(row=0, column=3)
+        self._play_btn = QPushButton("▶")
+        self._play_btn.setFixedSize(28, 24)
+        self._play_btn.setCheckable(True)
+        self._play_btn.clicked.connect(self._toggle_play)
+        layout.addWidget(self._play_btn)
 
-        # Frame actual / total
-        self._frame_var = tk.StringVar(value="1 / 1")
-        tk.Label(ctrl, textvariable=self._frame_var, width=8).grid(row=0, column=4, padx=6)
+        for icon, tip, slot in (
+            ("|◀", "Primer frame",  lambda: app.goto_first_frame()),
+            ("◀",  "Frame anterior",lambda: app.prev_frame()),
+            ("▶",  "Frame siguiente",lambda: app.next_frame()),
+            ("▶|", "Último frame",  lambda: app.goto_last_frame()),
+        ):
+            b = QPushButton(icon); b.setFixedSize(28, 24)
+            b.setToolTip(tip); b.clicked.connect(slot)
+            layout.addWidget(b)
 
-        # FPS
-        tk.Label(ctrl, text="FPS:").grid(row=0, column=5)
-        self._fps_var = tk.IntVar(value=10)
-        ttk.Spinbox(ctrl, from_=1, to=60, textvariable=self._fps_var,
-                    width=4).grid(row=0, column=6)
+        self._lbl = QLabel("Frame 1/1")
+        layout.addWidget(self._lbl)
 
-        # Botones de gestión de frames
-        tk.Button(ctrl, text="+F", width=3,
-                  command=self.app.add_frame).grid(row=0, column=7, padx=(12, 2))
-        tk.Button(ctrl, text="+F◁", width=4,
-                  command=self.app.duplicate_frame).grid(row=0, column=8, padx=2)
-        tk.Button(ctrl, text="-F", width=3,
-                  command=self.app.delete_frame).grid(row=0, column=9, padx=2)
+        self._fps_lbl = QLabel("FPS:")
+        self._fps_slider = QSlider(Qt.Orientation.Horizontal)
+        self._fps_slider.setRange(1, 30)
+        self._fps_slider.setValue(8)
+        self._fps_slider.setFixedWidth(80)
+        self._fps_slider.valueChanged.connect(self._update_fps_label)
+        self._fps_val_lbl = QLabel("8")
+        layout.addWidget(self._fps_lbl)
+        layout.addWidget(self._fps_slider)
+        layout.addWidget(self._fps_val_lbl)
+        layout.addStretch()
 
-    # ── Reproducción ──────────────────────────────────────────────────────────
-
-    def _toggle_play(self):
-        if self._play_job:
-            self._stop_play()
-        else:
-            self._start_play()
-
-    def _start_play(self):
-        self._play_btn.config(text="⏹")
-        self._advance()
-
-    def _advance(self):
-        self.app.next_frame(wrap=True)
-        delay = max(16, 1000 // self._fps_var.get())
-        self._play_job = self.app.root.after(delay, self._advance)
-
-    def _stop_play(self):
-        if self._play_job:
-            self.app.root.after_cancel(self._play_job)
-            self._play_job = None
-        self._play_btn.config(text="▶")
+    def update_display(self, cur: int, total: int):
+        self._lbl.setText(f"Frame {cur}/{total}")
 
     def stop_play(self):
-        self._stop_play()
+        self._playing = False
+        self._timer.stop()
+        self._play_btn.setChecked(False)
+        self._play_btn.setText("▶")
 
-    def update_display(self, current, total):
-        self._frame_var.set(f"{current} / {total}")
+    def _toggle_play(self):
+        self._playing = not self._playing
+        if self._playing:
+            fps = self._fps_slider.value()
+            self._timer.start(1000 // fps)
+            self._play_btn.setText("⏸")
+        else:
+            self._timer.stop()
+            self._play_btn.setText("▶")
+        self._play_btn.setChecked(self._playing)
+
+    def _tick(self):
+        self.app.next_frame(wrap=True)
+
+    def _update_fps_label(self, val: int):
+        self._fps_val_lbl.setText(str(val))
+        if self._playing:
+            self._timer.start(1000 // val)

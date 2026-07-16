@@ -1,38 +1,25 @@
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtWidgets import QStatusBar, QLabel
+from PySide6.QtCore    import Qt
 
 
-class StatusBar(tk.Frame):
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, relief="sunken", bd=1, **kwargs)
-
-        self._pos_var   = tk.StringVar(value="")
-        self._char_var  = tk.StringVar(value="")
-        self._frame_var = tk.StringVar(value="F:1/1")
-        self._tool_var  = tk.StringVar(value="pencil")
-
-        tk.Label(self, textvariable=self._pos_var,   anchor="w",
-                 width=12).pack(side="left", padx=4)
-        ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=2)
-        tk.Label(self, textvariable=self._char_var,  anchor="w",
-                 width=10).pack(side="left", padx=4)
-        ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=2)
-        tk.Label(self, textvariable=self._frame_var, anchor="w",
-                 width=10).pack(side="left", padx=4)
-        ttk.Separator(self, orient="vertical").pack(side="left", fill="y", padx=2)
-        tk.Label(self, textvariable=self._tool_var,  anchor="w").pack(side="left", padx=4)
+class StatusBar(QStatusBar):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pos_lbl  = QLabel(""); self._pos_lbl.setMinimumWidth(160)
+        self._tool_lbl = QLabel(""); self._tool_lbl.setMinimumWidth(100)
+        self._frame_lbl= QLabel(""); self._frame_lbl.setMinimumWidth(80)
+        for lbl in (self._pos_lbl, self._tool_lbl, self._frame_lbl):
+            self.addPermanentWidget(lbl)
 
     def set_pos(self, col, row, ch=None, fg=None, bg=None):
         if col is None:
-            self._pos_var.set("")
-            self._char_var.set("")
+            self._pos_lbl.setText("")
         else:
-            self._pos_var.set(f"C:{col} L:{row}")
-            ch_display = repr(ch) if ch and ch != " " else "' '"
-            self._char_var.set(f"{ch_display} {fg}/{bg}")
+            char_info = f"  '{ch}' fg={fg} bg={bg}" if ch else ""
+            self._pos_lbl.setText(f"Col {col}  Fil {row}{char_info}")
 
-    def set_frame(self, current, total):
-        self._frame_var.set(f"F:{current}/{total}")
+    def set_tool(self, name: str):
+        self._tool_lbl.setText(name)
 
-    def set_tool(self, name):
-        self._tool_var.set(name)
+    def set_frame(self, cur: int, total: int):
+        self._frame_lbl.setText(f"Frame {cur}/{total}")

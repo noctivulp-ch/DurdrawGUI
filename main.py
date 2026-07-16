@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-import tkinter as tk
-import tkinter.font  # noqa: F401 — necesario para tk.font en canvas.py
 import sys
 import os
+os.environ.setdefault("QT_QPA_PLATFORM", "wayland")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import core.log as log
 
-if __name__ == "__main__":
-    log.info("=" * 60)
-    log.info(f"DurdrawGUI iniciando  (Python {sys.version.split()[0]})")
-    log.info(f"Log: {log.LOG_PATH}")
-    log.info("=" * 60)
+log.info("=" * 60)
+log.info(f"DurdrawGUI iniciando  (Python {sys.version.split()[0]})")
+log.info("=" * 60)
 
-    from ui.app import App
-    root = tk.Tk()
-    log.info(f"Tk {tk.TkVersion}  windowing={root.tk.call('tk', 'windowingsystem')}")
+from PySide6.QtWidgets import QApplication
+from ui.app import App
+
+if __name__ == "__main__":
+    qt_app = QApplication(sys.argv)
+    log.info(f"Platform: {qt_app.platformName()}")
     try:
-        app = App(root)
-        log.info("App inicializada — entrando en mainloop")
-        root.mainloop()
-        log.info("mainloop terminó normalmente")
+        app = App()
+        app.show()
+        log.info("App visible — mainloop")
+        sys.exit(qt_app.exec())
     except Exception:
-        log.exception("Error fatal en mainloop")
+        log.exception("Error fatal")
         raise

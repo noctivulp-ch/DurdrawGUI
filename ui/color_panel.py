@@ -1,159 +1,131 @@
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+                               QPushButton, QLabel, QFrame, QLineEdit)
+from PySide6.QtGui     import QColor, QPainter, QPen
+from PySide6.QtCore    import Qt, QSize
 
-# ── Conjuntos de caracteres ────────────────────────────────────────────────────
-
-_CHARS_STD = (
-    [chr(c) for c in range(32, 127)]
-    + list("░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀"
-           "αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■")
-)
+from core.color_service import ANSI_COLORS, PALETTE_256
 
 
-def _load_unicode_chars(*block_names):
-    """Carga bloques unicode de durdraw_charsets y devuelve lista de chars."""
-    try:
-        from core.durdraw.durdraw_charsets import load_unicode_block
-    except ImportError:
-        return []
-    chars = []
-    for name in block_names:
-        blocks = load_unicode_block(name) or []
-        for row in blocks:
-            for cp in row.values():
-                if isinstance(cp, int) and cp > 0:
-                    try:
-                        chars.append(chr(cp))
-                    except (ValueError, OverflowError):
-                        pass
-    return chars
-
-
-class ColorPanel(tk.Frame):
-    def __init__(self, parent, app, **kwargs):
-        super().__init__(parent, bd=1, relief="raised", **kwargs)
-        self.app = app
-
-        # Carga de charsets Unicode al crear el panel (no al importar el módulo)
-        chars_bloques = _load_unicode_chars("Block Elements", "Box Drawing", "Geometric Shapes")
-        chars_braille = _load_unicode_chars("Braille Patterns")
-        chars_flechas = _load_unicode_chars("Arrows", "Miscellaneous Symbols and Arrows")
-
-        # ── Indicadores frente/fondo ───────────────────────────────────────
-        top = tk.LabelFrame(self, text="Color activo")
-        top.pack(fill="x", padx=4, pady=4)
-
-        self._fg_swatch = tk.Canvas(top, width=28, height=28, bd=1, relief="sunken")
-        self._bg_swatch = tk.Canvas(top, width=28, height=28, bd=1, relief="sunken")
-        self._fg_swatch.grid(row=0, column=0, padx=4, pady=4)
-        self._bg_swatch.grid(row=0, column=1, padx=4, pady=4)
-        tk.Label(top, text="FG").grid(row=1, column=0)
-        tk.Label(top, text="BG").grid(row=1, column=1)
-
-        swap_btn = tk.Button(top, text="⇄", command=self.app.swap_colors)
-        swap_btn.grid(row=0, column=2, padx=4)
-
-        self._char_label = tk.Label(top, text="' '", font=("Monospace", 18),
-                                    bd=1, relief="sunken", width=3)
-        self._char_label.grid(row=0, column=3, padx=4)
-        tk.Label(top, text="Char").grid(row=1, column=3)
-
-        # ── Paleta de colores ──────────────────────────────────────────────
-        self._pal_frame = tk.LabelFrame(self, text="Paleta")
-        self._pal_frame.pack(fill="x", padx=4, pady=4)
-        self._pal_cells = []
-        self._build_palette_grid()
-
-        # ── Selector de carácter (notebook) ───────────────────────────────
-        char_outer = tk.LabelFrame(self, text="Carácter")
-        char_outer.pack(fill="both", expand=True, padx=4, pady=4)
-
-        nb = ttk.Notebook(char_outer)
-        nb.pack(fill="both", expand=True)
-
-        self._char_canvases = {}
-        tabs = [
-            ("Std",    _CHARS_STD,    "#EEE"),
-            ("Blq",    chars_bloques, "#CCFFCC"),
-            ("Bra",    chars_braille, "#CCCCFF"),
-            ("Fle",    chars_flechas, "#FFE0AA"),
-        ]
-        for tab_name, chars, fg_hint in tabs:
-            frame = tk.Frame(nb)
-            nb.add(frame, text=tab_name)
-            cvs = tk.Canvas(frame, bg="#111", bd=0, highlightthickness=0)
-            vsb = ttk.Scrollbar(frame, orient="vertical", command=cvs.yview)
-            cvs.configure(yscrollcommand=vsb.set)
-            vsb.pack(side="right", fill="y")
-            cvs.pack(fill="both", expand=True)
-            self._char_canvases[tab_name] = (cvs, chars, fg_hint)
-            cvs.bind("<Configure>", lambda e, tn=tab_name: self._build_char_grid(tn))
-
-        # ── Suscribir eventos ──────────────────────────────────────────────
-        app.bus.on("color_changed",      lambda d: self.refresh(d["char"], d["fg"], d["bg"]))
-        app.bus.on("color_mode_changed", lambda _: self.rebuild_palette())
-
-    # ── Paleta de colores ──────────────────────────────────────────────────────
-
-    def _build_palette_grid(self):
-        for w in self._pal_frame.winfo_children():
-            w.destroy()
-        self._pal_cells.clear()
-
-        svc = self.app.color_service
-        palette   = svc.palette()
-        count     = svc.count()
-        is_256    = (svc.mode == "256")
-        cell_size = 10 if is_256 else 20
-        cols_per  = 16 if is_256 else 8
-        hint      = "Clic=FG  Clic-der=BG  (xterm-256)" if is_256 else "Clic=FG  Clic-der=BG"
-
-        for i, hex_color in enumerate(palette):
-            r, c = divmod(i, cols_per)
-            cell = tk.Canvas(self._pal_frame, width=cell_size, height=cell_size,
-                             bg=hex_color, cursor="hand2", bd=0,
-                             highlightthickness=1, highlightbackground="#222")
-            cell.grid(row=r, column=c, padx=0, pady=0)
-            cell.bind("<Button-1>", lambda e, idx=i: self.app.set_fg_color(idx))
-            cell.bind("<Button-3>", lambda e, idx=i: self.app.set_bg_color(idx))
-            self._pal_cells.append(cell)
-
-        hint_rows = (count + cols_per - 1) // cols_per
-        tk.Label(self._pal_frame, text=hint, font=("", 7)).grid(
-            row=hint_rows, column=0, columnspan=cols_per, pady=2
+class _ColorSwatch(QPushButton):
+    """Botón de color cuadrado con borde resaltable."""
+    def __init__(self, idx: int, hex_color: str, parent=None):
+        super().__init__(parent)
+        self._idx = idx
+        self._hex = hex_color
+        self.setFixedSize(16, 16)
+        self.setToolTip(f"#{idx}  {hex_color}")
+        self.setStyleSheet(
+            f"background-color:{hex_color}; border:1px solid #444; padding:0;"
         )
 
+    def mark_fg(self, yes: bool):
+        border = "#ffffff" if yes else "#444444"
+        self.setStyleSheet(
+            f"background-color:{self._hex}; border:2px solid {border}; padding:0;"
+        )
+
+    def mark_bg(self, yes: bool):
+        border = "#ffff00" if yes else "#444444"
+        self.setStyleSheet(
+            f"background-color:{self._hex}; border:2px solid {border}; padding:0;"
+        )
+
+
+class _CharEdit(QLineEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMaxLength(1)
+        self.setFixedWidth(28)
+        self.setText("@")
+
+
+class ColorPanel(QWidget):
+    def __init__(self, parent, app, **kwargs):
+        super().__init__(parent)
+        self.app = app
+        self._swatches: list[_ColorSwatch] = []
+        self._mode     = "16"
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # ── Carácter y colores activos ────────────────────────────────────
+        top = QHBoxLayout()
+        self._char_edit = _CharEdit()
+        self._char_edit.textChanged.connect(self._on_char_changed)
+        top.addWidget(QLabel("Ch:"))
+        top.addWidget(self._char_edit)
+
+        self._fg_swatch = _ColorSwatch(15, ANSI_COLORS[15])
+        self._bg_swatch = _ColorSwatch(0,  ANSI_COLORS[0])
+        self._fg_swatch.setToolTip("Color frontal (clic izq en paleta)")
+        self._bg_swatch.setToolTip("Color de fondo (clic der en paleta)")
+        top.addWidget(QLabel("FG:"))
+        top.addWidget(self._fg_swatch)
+        top.addWidget(QLabel("BG:"))
+        top.addWidget(self._bg_swatch)
+        top.addStretch()
+        layout.addLayout(top)
+
+        # ── Paleta ────────────────────────────────────────────────────────
+        self._palette_frame = QWidget()
+        layout.addWidget(self._palette_frame)
+        layout.addStretch()
+
+        self.rebuild_palette()
+
+        # Escuchar cambios de color desde el bus
+        app.bus.on("color_changed", self._on_color_changed)
+
     def rebuild_palette(self):
-        self._build_palette_grid()
+        for swatch in self._swatches:
+            swatch.deleteLater()
+        self._swatches.clear()
 
-    # ── Cuadrícula de caracteres ───────────────────────────────────────────────
+        old = self._palette_frame.layout()
+        if old:
+            QWidget().setLayout(old)   # desconectar layout viejo
 
-    def _build_char_grid(self, tab_name):
-        cvs, chars, fg_hint = self._char_canvases[tab_name]
-        cvs.delete("all")
-        if not chars:
-            cvs.create_text(60, 30, text="(vacío)", fill="#888",
-                            font=("Monospace", 9))
-            return
-        cw = max(cvs.winfo_width(), 80)
-        cell_px = 14
-        cols = max(1, cw // cell_px)
-        font = ("Monospace", 9)
-        for i, ch in enumerate(chars):
-            r, c_idx = divmod(i, cols)
-            x = c_idx * cell_px + cell_px // 2
-            y = r * cell_px + cell_px // 2
-            cid = cvs.create_text(x, y, text=ch, fill=fg_hint,
-                                   font=font, anchor="center", tags="char")
-            cvs.tag_bind(cid, "<Button-1>",
-                         lambda e, cc=ch: self.app.set_fg_char(cc))
-        total_rows = (len(chars) + cols - 1) // cols
-        cvs.configure(scrollregion=(0, 0, cw, total_rows * cell_px + 4))
+        mode   = self.app.color_service.mode
+        colors = ANSI_COLORS if mode == "16" else PALETTE_256
+        cols   = 2 if mode == "16" else 16
 
-    # ── Refresh ───────────────────────────────────────────────────────────────
+        grid = QGridLayout()
+        grid.setSpacing(1)
+        grid.setContentsMargins(0, 0, 0, 0)
+        self._palette_frame.setLayout(grid)
 
-    def refresh(self, fg_char, fg_color, bg_color):
-        self._char_label.config(text=fg_char if fg_char != " " else "' '")
-        svc = self.app.color_service
-        self._fg_swatch.config(bg=svc.color(fg_color))
-        self._bg_swatch.config(bg=svc.color(bg_color))
+        for idx, hex_c in enumerate(colors):
+            sw = _ColorSwatch(idx, hex_c)
+            sw.clicked.connect(lambda _, i=idx: self.app.set_fg_color(i))
+            sw.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            sw.customContextMenuRequested.connect(
+                lambda _, i=idx: self.app.set_bg_color(i)
+            )
+            r, c = divmod(idx, cols)
+            grid.addWidget(sw, r, c)
+            self._swatches.append(sw)
+
+        self._mode = mode
+
+    def _on_color_changed(self, data: dict):
+        fg   = data.get("fg", 15)
+        bg   = data.get("bg", 0)
+        ch   = data.get("char", "@")
+        mode = self.app.color_service.mode
+
+        colors = ANSI_COLORS if mode == "16" else PALETTE_256
+        self._fg_swatch.setStyleSheet(
+            f"background-color:{colors[fg]}; border:2px solid #ffffff; padding:0;"
+        )
+        self._bg_swatch.setStyleSheet(
+            f"background-color:{colors[bg]}; border:2px solid #ffff00; padding:0;"
+        )
+        if self._char_edit.text() != ch:
+            self._char_edit.blockSignals(True)
+            self._char_edit.setText(ch)
+            self._char_edit.blockSignals(False)
+
+    def _on_char_changed(self, text: str):
+        if text:
+            self.app.set_fg_char(text[-1])
