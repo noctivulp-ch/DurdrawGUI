@@ -2,24 +2,33 @@ import sys
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from copy import deepcopy
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.movie import Movie, Frame
-from commands.commands import CommandHistory
-import json, gzip
-from tools.pencil     import PencilTool
-from tools.eraser     import EraserTool
-from tools.eyedropper import EyedropperTool
-from tools.fill       import FillTool
-from tools.selection  import SelectionTool
-from tools.line       import LineTool
-from tools.rect       import RectTool
-from tools.ellipse    import EllipseTool
+from core.document      import Document
+from core.clipboard     import ClipboardManager
+import core.io          as doc_io
+from commands.commands  import CommandHistory
+from core.event_bus     import EventBus
+from core.color_service import ColorService
+from core.tool_registry import create_all
+from core.brush         import BrushLibrary
+import core.log         as log
+
+# Importar herramientas para que @register se ejecute y las registren
+import tools.pencil       # noqa: F401
+import tools.eraser       # noqa: F401
+import tools.eyedropper   # noqa: F401
+import tools.fill         # noqa: F401
+import tools.selection    # noqa: F401
+import tools.line         # noqa: F401
+import tools.rect         # noqa: F401
+import tools.ellipse      # noqa: F401
+
 from ui.canvas      import AsciiCanvas
 from ui.toolbar     import ToolBar
 from ui.color_panel import ColorPanel
+from ui.layer_panel import LayerPanel
 from ui.timeline    import Timeline
 from ui.statusbar   import StatusBar
 from ui.context_bar import ContextBar
@@ -28,92 +37,143 @@ DEFAULT_W = 80
 DEFAULT_H = 24
 
 
-class _Opts:
-    def __init__(self, w, h):
-        self.sizeX = w
-        self.sizeY = h
+class NewCanvasOverlay(tk.Frame):
+    """Panel superpuesto para configurar el nuevo lienzo.
 
+    Es un Frame normal colocado sobre el canvas con place(), sin Toplevel ni
+    ventana X11 separada. Evita todos los problemas de grab/WM_DELETE_WINDOW
+    con XWayland/niri.  on_done(result | None) se llama al confirmar/cancelar.
+    """
 
-class NewCanvasDialog(tk.Toplevel):
-    """Diálogo modal para configurar un nuevo lienzo."""
+    def __init__(self, container, current_w=DEFAULT_W, current_h=DEFAULT_H,
+                 current_mode="16", on_done=None):
+        super().__init__(container, bd=1, relief="solid",
+                         bg="#2b2b2b", padx=20, pady=14)
+        self._on_done = on_done
 
-    def __init__(self, parent, current_w=DEFAULT_W, current_h=DEFAULT_H,
-                 current_mode="16"):
-        super().__init__(parent)
-        self.title("Nuevo lienzo")
-        self.resizable(False, False)
-        self.result = None
+        def lbl(parent, text, **kw):
+            return tk.Label(parent, text=text, bg="#2b2b2b", fg="#dddddd", **kw)
 
-        tk.Label(self, text="Ancho:").grid(row=0, column=0, padx=10, pady=6, sticky="e")
+        lbl(self, "Nuevo lienzo", font=("TkDefaultFont", 11, "bold")).pack(pady=(0, 10))
+
+        # ── Ancho ──────────────────────────────────────────────────────────
+        row = tk.Frame(self, bg="#2b2b2b"); row.pack(fill="x", pady=3)
+        lbl(row, "Ancho:", width=9, anchor="e").pack(side="left")
         self._w = tk.IntVar(value=current_w)
-        ttk.Spinbox(self, from_=10, to=500, textvariable=self._w,
-                    width=7).grid(row=0, column=1, padx=10, pady=6)
+        tk.Spinbox(row, from_=10, to=500, textvariable=self._w,
+                   width=7).pack(side="left", padx=(8, 0))
+        lbl(row, "columnas", fg="#888888").pack(side="left", padx=4)
 
-        tk.Label(self, text="Alto:").grid(row=1, column=0, padx=10, pady=6, sticky="e")
+        # ── Alto ───────────────────────────────────────────────────────────
+        row = tk.Frame(self, bg="#2b2b2b"); row.pack(fill="x", pady=3)
+        lbl(row, "Alto:", width=9, anchor="e").pack(side="left")
         self._h = tk.IntVar(value=current_h)
-        ttk.Spinbox(self, from_=4, to=300, textvariable=self._h,
-                    width=7).grid(row=1, column=1, padx=10, pady=6)
+        tk.Spinbox(row, from_=4, to=300, textvariable=self._h,
+                   width=7).pack(side="left", padx=(8, 0))
+        lbl(row, "filas", fg="#888888").pack(side="left", padx=4)
 
-        tk.Label(self, text="Colores:").grid(row=2, column=0, padx=10, pady=6, sticky="e")
+        # ── Modo de color ──────────────────────────────────────────────────
+        row = tk.Frame(self, bg="#2b2b2b"); row.pack(fill="x", pady=3)
+        lbl(row, "Colores:", width=9, anchor="e").pack(side="left")
         self._mode = tk.StringVar(value=current_mode)
-        modes = tk.Frame(self)
-        tk.Radiobutton(modes, text="16 ANSI",   value="16",  variable=self._mode).pack(side="left")
-        tk.Radiobutton(modes, text="256 xterm", value="256", variable=self._mode).pack(side="left")
-        modes.grid(row=2, column=1, padx=10)
+        for val, txt in (("16", "16 ANSI"), ("256", "256 xterm")):
+            tk.Radiobutton(row, text=txt, value=val, variable=self._mode,
+                           bg="#2b2b2b", fg="#dddddd",
+                           selectcolor="#444444",
+                           activebackground="#2b2b2b",
+                           activeforeground="#ffffff").pack(side="left", padx=(8, 4))
 
-        btn_f = tk.Frame(self)
-        btn_f.grid(row=3, column=0, columnspan=2, pady=10)
-        tk.Button(btn_f, text="Aceptar",  command=self._ok).pack(side="left", padx=6)
-        tk.Button(btn_f, text="Cancelar", command=self.destroy).pack(side="left", padx=6)
+        # ── Botones ────────────────────────────────────────────────────────
+        ttk.Separator(self, orient="horizontal").pack(fill="x", pady=(10, 0))
+        btn_row = tk.Frame(self, bg="#2b2b2b"); btn_row.pack(pady=(10, 2))
+        tk.Button(btn_row, text="Crear lienzo", width=13,
+                  command=self._ok).pack(side="left", padx=6)
+        tk.Button(btn_row, text="Cancelar", width=10,
+                  command=self._cancel).pack(side="left", padx=6)
 
-        self.transient(parent)
-        self.grab_set()
-        self.bind("<Return>", lambda e: self._ok())
-        self.bind("<Escape>", lambda e: self.destroy())
-        parent.wait_window(self)
+        self.bind_all("<Return>", lambda e: self._ok())
+        self.bind_all("<Escape>", lambda e: self._cancel())
+        log.debug("NewCanvasOverlay  construido")
+
+    def show_centered(self):
+        """Colocar centrado sobre el container padre con place()."""
+        self.update_idletasks()
+        pw = self.master.winfo_width()
+        ph = self.master.winfo_height()
+        ow = self.winfo_reqwidth()
+        oh = self.winfo_reqheight()
+        x = max(0, (pw - ow) // 2)
+        y = max(0, (ph - oh) // 2)
+        log.debug(f"NewCanvasOverlay  place x={x} y={y} en contenedor {pw}×{ph}")
+        self.place(x=x, y=y)
+        self.lift()
+        self.focus_set()
+
+    def _dismiss(self, result):
+        log.debug(f"NewCanvasOverlay._dismiss  result={result}")
+        self.unbind_all("<Return>")
+        self.unbind_all("<Escape>")
+        self.place_forget()
+        self.destroy()
+        if self._on_done:
+            self._on_done(result)
+
+    def _cancel(self):
+        log.debug("NewCanvasOverlay._cancel  llamado")
+        self._dismiss(None)
 
     def _ok(self):
-        self.result = {
-            'width':      self._w.get(),
-            'height':     self._h.get(),
-            'color_mode': self._mode.get(),
-        }
-        self.destroy()
+        log.debug("NewCanvasOverlay._ok  llamado")
+        try:
+            w = int(self._w.get())
+            h = int(self._h.get())
+        except (ValueError, tk.TclError) as exc:
+            log.warning(f"NewCanvasOverlay._ok  valor inválido: {exc}")
+            messagebox.showerror("Valor inválido",
+                                 "Ancho y alto deben ser números enteros.")
+            return
+        if not (10 <= w <= 500) or not (4 <= h <= 300):
+            log.warning(f"NewCanvasOverlay._ok  rango inválido: {w}×{h}")
+            messagebox.showerror("Valor fuera de rango",
+                                 "Ancho: 10–500  ·  Alto: 4–300")
+            return
+        log.info(f"NewCanvasOverlay  aceptado: {w}×{h} modo={self._mode.get()}")
+        self._dismiss({"width": w, "height": h, "color_mode": self._mode.get()})
 
 
 class App:
     def __init__(self, root):
+        log.info("App.__init__ inicio")
         self.root = root
         root.title("DurdrawGUI")
         root.minsize(900, 600)
+        # Cierre limpio desde el WM (botón X, atajo de teclado del compositor, etc.)
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
+        log.debug("App  WM_DELETE_WINDOW registrado en root")
 
-        # ── Estado global ──────────────────────────────────────────────────
-        self.color_mode = "16"
-        self.movie      = Movie(_Opts(DEFAULT_W, DEFAULT_H))
-        self.history    = CommandHistory()
-        self.fg_char    = "@"
-        self.fg_color   = 15
-        self.bg_color   = 0
+        # ── Bus y servicios ────────────────────────────────────────────────
+        self.bus           = EventBus()
+        self.color_service = ColorService(self.bus)
 
-        # Selección y portapapeles
-        self._sel_rect = None   # (c0, r0, c1, r1)
-        self.clipboard = None   # lista de listas: [row][col] = (ch, fg, bg)
+        # ── Documento activo ───────────────────────────────────────────────
+        self._dirty        = False          # hay cambios sin guardar
+        self._saved_path   = None           # último path guardado (None = sin título)
+        self.doc           = Document(DEFAULT_W, DEFAULT_H)
+        self.history       = self._new_history()
+        self.clipboard_mgr = ClipboardManager(self)
+        self.fg_char  = "@"
+        self.fg_color = 15
+        self.bg_color = 0
 
         # Rejilla visual
         self._show_grid = False
 
-        # ── Herramientas ───────────────────────────────────────────────────
-        self._tools = {
-            "pencil":     PencilTool(self),
-            "eraser":     EraserTool(self),
-            "eyedropper": EyedropperTool(self),
-            "fill":       FillTool(self),
-            "selection":  SelectionTool(self),
-            "line":       LineTool(self),
-            "rect":       RectTool(self),
-            "ellipse":    EllipseTool(self),
-        }
+        # ── Herramientas (desde el registro) ──────────────────────────────
+        self._tools      = create_all(self)
         self.active_tool = self._tools["pencil"]
+
+        # ── Librería de pinceles (antes del layout para que ContextBar la use) ─
+        self.brush_library = BrushLibrary()
 
         # ── Layout ─────────────────────────────────────────────────────────
         self._build_menu()
@@ -127,9 +187,11 @@ class App:
         main_pane = ttk.PanedWindow(root, orient="horizontal")
         main_pane.pack(fill="both", expand=True)
 
-        self.color_panel = ColorPanel(main_pane, self, width=160)
-        main_pane.add(self.color_panel, weight=0)
+        # Panel izquierdo: solo capas (delgado, como en Aseprite)
+        self.layer_panel = LayerPanel(main_pane, self, width=160)
+        main_pane.add(self.layer_panel, weight=0)
 
+        # Centro: barra de contexto + lienzo (recibe todo el espacio disponible)
         center = tk.Frame(main_pane)
         main_pane.add(center, weight=1)
 
@@ -139,15 +201,22 @@ class App:
         self.canvas_widget = AsciiCanvas(center, self)
         self.canvas_widget.pack(fill="both", expand=True)
 
-        self.toolbar = ToolBar(main_pane, self, width=48)
-        main_pane.add(self.toolbar, weight=0)
+        # Panel derecho: herramientas (izq) + paleta de color (der), como en Aseprite
+        right_frame = tk.Frame(main_pane)
+        main_pane.add(right_frame, weight=0)
+
+        self.toolbar = ToolBar(right_frame, self, width=48)
+        self.toolbar.pack(side="left", fill="y")
+
+        self.color_panel = ColorPanel(right_frame, self)
+        self.color_panel.pack(side="left", fill="both", expand=True)
 
         # ── Atajos ─────────────────────────────────────────────────────────
         self._bind_keys()
 
         # ── Render inicial ─────────────────────────────────────────────────
         root.update_idletasks()
-        self.canvas_widget.render_frame(self.current_frame())
+        self.canvas_widget.render_frame()
         self.toolbar.highlight("pencil")
         self.context_bar.switch("pencil")
         self._refresh_color_panel()
@@ -165,7 +234,14 @@ class App:
         fm.add_command(label="Abrir…",          command=self.open_file,   accelerator="Ctrl+O")
         fm.add_command(label="Guardar…",        command=self.save,        accelerator="Ctrl+S")
         fm.add_separator()
-        fm.add_command(label="Exportar ANSI…",  command=self.export_ansi)
+        exp_m = tk.Menu(fm, tearoff=0)
+        fm.add_cascade(label="Exportar", menu=exp_m)
+        exp_m.add_command(label="ANSI…",              command=self.export_ansi)
+        exp_m.add_command(label="PNG…",               command=self.export_png)
+        exp_m.add_command(label="JPEG…",              command=self.export_jpeg)
+        exp_m.add_separator()
+        exp_m.add_command(label="GIF animado…",       command=self.export_gif)
+        exp_m.add_command(label="MP4…",               command=self.export_mp4)
         fm.add_separator()
         fm.add_command(label="Salir",           command=self.root.quit)
 
@@ -189,6 +265,14 @@ class App:
         frm.add_separator()
         frm.add_command(label="Anterior",       command=self.prev_frame,      accelerator="←")
         frm.add_command(label="Siguiente",      command=self.next_frame,      accelerator="→")
+
+        lm = tk.Menu(mb, tearoff=0)
+        mb.add_cascade(label="Capas", menu=lm)
+        lm.add_command(label="Nueva capa",       command=self.add_layer)
+        lm.add_command(label="Eliminar capa",    command=self.delete_layer)
+        lm.add_separator()
+        lm.add_command(label="Subir capa",       command=self.move_layer_up)
+        lm.add_command(label="Bajar capa",       command=self.move_layer_down)
 
         vm = tk.Menu(mb, tearoff=0)
         mb.add_cascade(label="Vista", menu=vm)
@@ -222,7 +306,6 @@ class App:
         r.bind("<Control-plus>",   lambda e: self.zoom_in())
         r.bind("<Control-minus>",  lambda e: self.zoom_out())
         r.bind("<Control-0>",      lambda e: self.zoom_reset())
-        # Atajos numéricos de zoom (1=100%, 2=siguiente, etc.)
         r.bind("1",  lambda e: self.canvas_widget.zoom_reset())
         r.bind("2",  lambda e: self._zoom_to_index(5))   # 16px ≈ 114%
         r.bind("3",  lambda e: self._zoom_to_index(6))   # 18px ≈ 129%
@@ -253,7 +336,15 @@ class App:
     # ── Acceso al modelo ───────────────────────────────────────────────────
 
     def current_frame(self):
-        return self.movie.currentFrame
+        """Frame de la capa activa (para escritura por herramientas)."""
+        return self.doc.current_frame()
+
+    @property
+    def active_brush(self):
+        """Pincel activo según el contexto de la barra de herramientas."""
+        cb = getattr(self, "context_bar", None)
+        name = cb.active_brush_name if cb else "Punto 1×1"
+        return self.brush_library.get(name)
 
     # ── Herramientas ───────────────────────────────────────────────────────
 
@@ -289,8 +380,16 @@ class App:
         self.fg_color, self.bg_color = self.bg_color, self.fg_color
         self._refresh_color_panel()
 
+    @property
+    def color_mode(self):
+        return self.color_service.mode
+
     def _refresh_color_panel(self):
-        self.color_panel.refresh(self.fg_char, self.fg_color, self.bg_color)
+        self.bus.emit("color_changed", {
+            "fg": self.fg_color,
+            "bg": self.bg_color,
+            "char": self.fg_char,
+        })
 
     # ── Historial ──────────────────────────────────────────────────────────
 
@@ -302,11 +401,11 @@ class App:
 
     # ── Zoom ───────────────────────────────────────────────────────────────
 
-    def zoom_in(self):
-        self.canvas_widget.zoom_in()
+    def zoom_in(self, mouse_x=None, mouse_y=None):
+        self.canvas_widget.zoom_in(mouse_x, mouse_y)
 
-    def zoom_out(self):
-        self.canvas_widget.zoom_out()
+    def zoom_out(self, mouse_x=None, mouse_y=None):
+        self.canvas_widget.zoom_out(mouse_x, mouse_y)
 
     def zoom_reset(self):
         self.canvas_widget.zoom_reset()
@@ -322,328 +421,338 @@ class App:
 
     def _toggle_grid(self):
         self._show_grid = self._grid_var.get()
-        self.canvas_widget.render_frame(self.current_frame())
+        self.canvas_widget.render_frame()
 
     def _toggle_color_mode(self):
-        self.color_mode = "256" if self._color256_var.get() else "16"
-        self.color_panel.rebuild_palette()
+        mode = "256" if self._color256_var.get() else "16"
+        self.color_service.set_mode(mode)
         self._refresh_color_panel()
 
     # ── Selección ──────────────────────────────────────────────────────────
 
+    # Propiedades que canvas.py y herramientas acceden directamente
+    @property
+    def _sel_rect(self):
+        return self.clipboard_mgr.sel_rect
+
+    @property
+    def clipboard(self):
+        return self.clipboard_mgr.clipboard
+
     def set_selection_rect(self, c0, r0, c1, r1):
-        self._sel_rect = (c0, r0, c1, r1) if c0 is not None else None
+        self.clipboard_mgr.set_rect(c0, r0, c1, r1)
 
     def select_all(self):
-        fr = self.current_frame()
-        self.select_tool("selection")
-        self.canvas_widget.set_selection(0, 0, fr.width - 1, fr.height - 1)
-        self.set_selection_rect(0, 0, fr.width - 1, fr.height - 1)
+        self.clipboard_mgr.select_all()
 
     def deselect(self):
-        if "selection" in self._tools:
-            self._tools["selection"].deselect()
-        self.set_selection_rect(None, None, None, None)
+        self.clipboard_mgr.deselect()
 
     def copy_selection(self):
-        if not self._sel_rect:
-            return
-        c0, r0, c1, r1 = self._sel_rect
-        frame = self.current_frame()
-        self.clipboard = []
-        for r in range(r0, r1 + 1):
-            row_data = []
-            for c in range(c0, c1 + 1):
-                ch     = frame.content[r][c]
-                fg, bg = frame.newColorMap[r][c]
-                row_data.append((ch, fg, bg))
-            self.clipboard.append(row_data)
+        self.clipboard_mgr.copy()
 
     def cut_selection(self):
-        if not self._sel_rect:
-            return
-        self.copy_selection()
-        self.clear_selection()
+        self.clipboard_mgr.cut()
 
     def paste_clipboard(self):
-        if not self.clipboard:
-            return
-        frame = self.current_frame()
-        # Pegar en la posición de inicio de la selección, o (0,0) si no hay selección
-        if self._sel_rect:
-            col0, row0 = self._sel_rect[0], self._sel_rect[1]
-        else:
-            col0, row0 = 0, 0
-
-        snap_c = deepcopy(frame.content)
-        snap_m = deepcopy(frame.newColorMap)
-        clip   = deepcopy(self.clipboard)
-
-        def _apply(content, colormap, clip_data, dc, dr):
-            for ri, row_data in enumerate(clip_data):
-                r = dr + ri
-                if r >= frame.height:
-                    break
-                for ci, (ch, fg, bg) in enumerate(row_data):
-                    c = dc + ci
-                    if c >= frame.width:
-                        break
-                    content[r][c]    = ch
-                    colormap[r][c]   = [fg, bg]
-
-        _apply(frame.content, frame.newColorMap, clip, col0, row0)
-        self.canvas_widget.render_frame(frame)
-
-        new_c = deepcopy(frame.content)
-        new_m = deepcopy(frame.newColorMap)
-
-        def undo():
-            frame.content     = deepcopy(snap_c)
-            frame.newColorMap = deepcopy(snap_m)
-            self.canvas_widget.render_frame(frame)
-
-        def redo():
-            frame.content     = deepcopy(new_c)
-            frame.newColorMap = deepcopy(new_m)
-            self.canvas_widget.render_frame(frame)
-
-        self.history.push(undo, redo)
+        self.clipboard_mgr.paste()
 
     def clear_selection(self):
-        """Borrar el contenido de las celdas seleccionadas (espacio + color de fondo)."""
-        if not self._sel_rect:
-            return
-        c0, r0, c1, r1 = self._sel_rect
-        frame = self.current_frame()
-        snap_c = deepcopy(frame.content)
-        snap_m = deepcopy(frame.newColorMap)
-
-        for r in range(r0, r1 + 1):
-            for c in range(c0, c1 + 1):
-                frame.content[r][c]    = " "
-                frame.newColorMap[r][c] = [7, 0]
-                self.canvas_widget.update_cell(c, r, " ", 7, 0)
-
-        new_c = deepcopy(frame.content)
-        new_m = deepcopy(frame.newColorMap)
-
-        def undo():
-            frame.content     = deepcopy(snap_c)
-            frame.newColorMap = deepcopy(snap_m)
-            self.canvas_widget.render_frame(frame)
-
-        def redo():
-            frame.content     = deepcopy(new_c)
-            frame.newColorMap = deepcopy(new_m)
-            self.canvas_widget.render_frame(frame)
-
-        self.history.push(undo, redo)
+        self.clipboard_mgr.erase()
 
     # ── Navegación de frames ───────────────────────────────────────────────
 
     def _goto_frame(self, n):
-        total = self.movie.frameCount
-        n = max(1, min(n, total))
-        self.movie.currentFrameNumber = n
-        self.movie.currentFrame = self.movie.frames[n - 1]
-        self.canvas_widget.render_frame(self.current_frame())
+        self.doc.goto_frame(n)
+        self.canvas_widget.render_frame()
         self._refresh_timeline()
 
     def prev_frame(self, wrap=False):
-        n = self.movie.currentFrameNumber - 1
+        n = self.doc.currentFrameNumber - 1
         if n < 1:
-            n = self.movie.frameCount if wrap else 1
+            n = self.doc.frameCount if wrap else 1
         self._goto_frame(n)
 
     def next_frame(self, wrap=False):
-        n = self.movie.currentFrameNumber + 1
-        if n > self.movie.frameCount:
-            n = 1 if wrap else self.movie.frameCount
+        n = self.doc.currentFrameNumber + 1
+        if n > self.doc.frameCount:
+            n = 1 if wrap else self.doc.frameCount
         self._goto_frame(n)
 
     def goto_first_frame(self):
         self._goto_frame(1)
 
     def goto_last_frame(self):
-        self._goto_frame(self.movie.frameCount)
+        self._goto_frame(self.doc.frameCount)
 
     def add_frame(self):
-        self.movie.addEmptyFrame()
-        self._goto_frame(self.movie.frameCount)
+        self.doc.add_empty_frame()
+        self._goto_frame(self.doc.frameCount)
 
     def duplicate_frame(self):
-        self.movie.duplicateCurrentFrame()
-        self._goto_frame(self.movie.currentFrameNumber)
+        self.doc.duplicate_current_frame()
+        self._refresh_timeline()
+        self.canvas_widget.render_frame()
 
     def delete_frame(self):
-        if self.movie.frameCount <= 1:
-            return
-        self.movie.deleteFrame()
-        self._goto_frame(min(self.movie.currentFrameNumber,
-                             self.movie.frameCount))
+        self.doc.delete_frame()
+        self._goto_frame(self.doc.currentFrameNumber)
 
     def _refresh_timeline(self):
-        cur   = self.movie.currentFrameNumber
-        total = self.movie.frameCount
+        cur   = self.doc.currentFrameNumber
+        total = self.doc.frameCount
         self.timeline.update_display(cur, total)
         self.statusbar.set_frame(cur, total)
+
+    # ── Gestión de capas ───────────────────────────────────────────────────
+
+    def add_layer(self):
+        self.doc.add_layer()
+        self.bus.emit("layers_changed", None)
+        self.canvas_widget.render_frame()
+
+    def delete_layer(self):
+        self.doc.delete_active_layer()
+        self.bus.emit("layers_changed", None)
+        self.canvas_widget.render_frame()
+
+    def move_layer_up(self):
+        idx = self.doc.active_layer_idx
+        self.doc.move_layer(idx, idx + 1)
+        self.bus.emit("layers_changed", None)
+        self.canvas_widget.render_frame()
+
+    def move_layer_down(self):
+        idx = self.doc.active_layer_idx
+        self.doc.move_layer(idx, idx - 1)
+        self.bus.emit("layers_changed", None)
+        self.canvas_widget.render_frame()
+
+    # ── Cierre de la aplicación ────────────────────────────────────────────
+
+    def _on_close(self):
+        """Llamado cuando el WM pide cerrar la ventana principal."""
+        log.info("_on_close  WM_DELETE_WINDOW recibido")
+        if self._confirm_discard():
+            log.info("_on_close  confirmado → root.destroy()")
+            self.root.destroy()
+        else:
+            log.info("_on_close  cancelado por el usuario")
+
+    # ── Tracking de cambios sin guardar ───────────────────────────────────
+
+    def _new_history(self):
+        return CommandHistory(on_change=self._mark_dirty)
+
+    def _mark_dirty(self):
+        if not self._dirty:
+            self._dirty = True
+            base = os.path.basename(self._saved_path) if self._saved_path else "Sin título"
+            self.root.title(f"DurdrawGUI — {base} *")
+
+    def _clear_dirty(self):
+        self._dirty = False
+        base = os.path.basename(self._saved_path) if self._saved_path else "Sin título"
+        self.root.title(f"DurdrawGUI — {base}")
+
+    def _confirm_discard(self) -> bool:
+        """Pregunta si descartar cambios sin guardar. Devuelve True si se puede continuar."""
+        if not self._dirty:
+            log.debug("_confirm_discard  no hay cambios → continuar")
+            return True
+        log.info("_confirm_discard  hay cambios sin guardar → mostrando diálogo")
+        resp = messagebox.askyesnocancel(
+            "Cambios sin guardar",
+            "El lienzo actual tiene cambios sin guardar.\n"
+            "¿Descartar los cambios y continuar?",
+        )
+        log.info(f"_confirm_discard  respuesta={resp}")
+        if resp is True:
+            return True
+        return False
 
     # ── Archivo ────────────────────────────────────────────────────────────
 
     def new_file(self):
-        dlg = NewCanvasDialog(
-            self.root,
-            current_w=self.movie.sizeX,
-            current_h=self.movie.sizeY,
-            current_mode=self.color_mode,
-        )
-        if dlg.result is None:
+        log.info("new_file  inicio")
+        if not self._confirm_discard():
+            log.info("new_file  cancelado en confirm_discard")
             return
-        w = dlg.result['width']
-        h = dlg.result['height']
-        self.color_mode = dlg.result['color_mode']
-        self._color256_var.set(self.color_mode == "256")
-        self.timeline.stop_play()
-        self.movie     = Movie(_Opts(w, h))
-        self.history   = CommandHistory()
-        self._sel_rect = None
-        self.clipboard = None
-        self.color_panel.rebuild_palette()
-        self.canvas_widget.render_frame(self.current_frame())
-        self._refresh_timeline()
-        self._refresh_color_panel()
-        self.root.title("DurdrawGUI")
+        log.debug("new_file  abriendo NewCanvasOverlay")
+
+        def _apply(result):
+            if result is None:
+                log.info("new_file  cancelado")
+                return
+            w        = result["width"]
+            h        = result["height"]
+            new_mode = result["color_mode"]
+            log.info(f"new_file  creando lienzo {w}×{h} modo={new_mode}")
+            self.color_service.set_mode(new_mode)
+            self._color256_var.set(new_mode == "256")
+            self.timeline.stop_play()
+            self.doc          = Document(w, h)
+            self.history      = self._new_history()
+            self._saved_path  = None
+            self._dirty       = False
+            self.clipboard_mgr.reset()
+            self.color_panel.rebuild_palette()
+            self.bus.emit("layers_changed", None)
+            self.canvas_widget.render_frame()
+            self._refresh_timeline()
+            self._refresh_color_panel()
+            self.root.title("DurdrawGUI — Sin título")
+            log.info(f"new_file  listo — lienzo {w}×{h} creado")
+
+        overlay = NewCanvasOverlay(
+            self.canvas_widget,      # superpuesto sobre el canvas
+            current_w=self.doc.width,
+            current_h=self.doc.height,
+            current_mode=self.color_service.mode,
+            on_done=_apply,
+        )
+        overlay.show_centered()
 
     def open_file(self):
+        log.info("open_file  inicio")
+        if not self._confirm_discard():
+            log.info("open_file  cancelado en confirm_discard")
+            return
         path = filedialog.askopenfilename(
-            filetypes=[("Archivos durdraw", "*.dur"), ("Todos", "*.*")]
+            filetypes=[
+                ("Archivos DurdrawGUI", "*.durg *.dur"),
+                ("Archivos durdraw", "*.dur"),
+                ("Todos", "*.*"),
+            ]
         )
         if not path:
+            log.info("open_file  selección cancelada")
             return
+        log.info(f"open_file  cargando '{path}'")
         try:
-            opener = gzip.open if path.endswith(".dur") else open
-            with opener(path, "rt", encoding="utf-8") as f:
-                data = json.load(f)
-            dm = data["DurMovie"]
-            w, h = dm["sizeX"], dm["sizeY"]
-            mov = Movie(_Opts(w, h))
-            first = True
-            for fd in dm["frames"]:
-                if first:
-                    fr = mov.frames[0]
-                    first = False
-                else:
-                    mov.addEmptyFrame()
-                    mov.nextFrame()
-                    fr = mov.currentFrame
-                for row_i, line in enumerate(fd["contents"]):
-                    if row_i < h:
-                        fr.content[row_i] = list(line.ljust(w))[:w]
-                cmap = fd["colorMap"]
-                for col in range(w):
-                    for row in range(h):
-                        pair = cmap[col][row] if col < len(cmap) and row < len(cmap[col]) else [7, 0]
-                        fr.newColorMap[row][col] = list(pair)
-            mov.gotoFrame(1)
-            self.movie     = mov
-            self.history   = CommandHistory()
-            self._sel_rect = None
-            self.clipboard = None
+            self.doc         = doc_io.load(path)
+            self.history     = self._new_history()
+            self._saved_path = path
+            self._dirty      = False
+            self.clipboard_mgr.reset()
+            self.bus.emit("layers_changed", None)
             self._goto_frame(1)
             self.root.title(f"DurdrawGUI — {os.path.basename(path)}")
+            log.info(f"open_file  OK — {self.doc.width}×{self.doc.height}"
+                     f" {self.doc.frameCount} frames {len(self.doc.layers)} capas")
         except Exception as exc:
+            log.error(f"open_file  ERROR: {exc}")
             messagebox.showerror("Error al abrir", str(exc))
 
     def save(self):
+        log.info("save  inicio")
         path = filedialog.asksaveasfilename(
-            defaultextension=".dur",
-            filetypes=[("Archivos durdraw", "*.dur"), ("Todos", "*.*")]
+            defaultextension=".durg",
+            initialfile=os.path.basename(self._saved_path) if self._saved_path else "",
+            filetypes=[
+                ("Archivo DurdrawGUI (capas)", "*.durg"),
+                ("Archivo durdraw (aplanado)", "*.dur"),
+                ("Todos", "*.*"),
+            ]
         )
         if not path:
+            log.info("save  cancelado")
             return
+        log.info(f"save  guardando en '{path}'")
         try:
-            mov = self.movie
-            frames_data = []
-            for fr in mov.frames:
-                cmap = [[fr.newColorMap[row][col] for row in range(mov.sizeY)]
-                        for col in range(mov.sizeX)]
-                frames_data.append({
-                    "frameNumber": len(frames_data) + 1,
-                    "delay": getattr(fr, "delay", 1),
-                    "contents": ["".join(fr.content[row]) for row in range(mov.sizeY)],
-                    "colorMap": cmap,
-                })
-            payload = {
-                "DurMovie": {
-                    "formatVersion": 7,
-                    "colorFormat": "16",
-                    "preferredFont": "fixed",
-                    "encoding": "utf-8",
-                    "name": "",
-                    "artist": "",
-                    "framerate": 10,
-                    "sizeX": mov.sizeX,
-                    "sizeY": mov.sizeY,
-                    "extra": None,
-                    "frames": frames_data,
-                }
-            }
-            with gzip.open(path, "wt", encoding="utf-8") as f:
-                json.dump(payload, f)
-            self.root.title(f"DurdrawGUI — {os.path.basename(path)}")
+            doc_io.save(self.doc, path)
+            self._saved_path = path
+            self._clear_dirty()
+            log.info("save  OK")
         except Exception as exc:
+            log.error(f"save  ERROR: {exc}")
             messagebox.showerror("Error al guardar", str(exc))
 
-    # ── Exportar ANSI ──────────────────────────────────────────────────────
+    # ── Exportar ───────────────────────────────────────────────────────────
 
     def export_ansi(self):
         path = filedialog.asksaveasfilename(
             defaultextension=".ans",
-            filetypes=[("Archivos ANSI", "*.ans"), ("Texto", "*.txt"), ("Todos", "*.*")]
+            filetypes=[("Archivos ANSI", "*.ans"), ("Texto", "*.txt"), ("Todos", "*.*")],
         )
         if not path:
             return
         try:
-            frame  = self.current_frame()
-            lines  = []
-            for row in range(frame.height):
-                parts = []
-                last_fg, last_bg = -1, -1
-                for col in range(frame.width):
-                    ch     = frame.content[row][col]
-                    fg, bg = frame.newColorMap[row][col]
-                    if fg != last_fg or bg != last_bg:
-                        parts.append(_ansi_color_seq(fg, bg))
-                        last_fg, last_bg = fg, bg
-                    parts.append(ch)
-                parts.append("\x1b[0m")
-                lines.append("".join(parts))
-            output = "\r\n".join(lines)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(output)
-            messagebox.showinfo("Exportado", f"ANSI guardado en:\n{path}")
+            doc_io.export_ansi(self.doc, path)
+            messagebox.showinfo("Exportado", f"Guardado en:\n{path}")
         except Exception as exc:
             messagebox.showerror("Error al exportar", str(exc))
 
+    def export_png(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG", "*.png"), ("Todos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            doc_io.export_png(self.doc, path)
+            messagebox.showinfo("Exportado", f"Guardado en:\n{path}")
+        except ImportError as exc:
+            messagebox.showerror("Dependencia faltante", str(exc))
+        except Exception as exc:
+            messagebox.showerror("Error al exportar", str(exc))
 
-# ── Helpers ANSI ───────────────────────────────────────────────────────────
+    def export_jpeg(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".jpg",
+            filetypes=[("JPEG", "*.jpg *.jpeg"), ("Todos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            doc_io.export_jpeg(self.doc, path)
+            messagebox.showinfo("Exportado", f"Guardado en:\n{path}")
+        except ImportError as exc:
+            messagebox.showerror("Dependencia faltante", str(exc))
+        except Exception as exc:
+            messagebox.showerror("Error al exportar", str(exc))
 
-# Mapeo de índice ANSI 16 → secuencias VT100
-_FG_MAP = {
-    0: "30", 1: "31", 2: "32", 3: "33",
-    4: "34", 5: "35", 6: "36", 7: "37",
-    8: "90", 9: "91", 10: "92", 11: "93",
-    12: "94", 13: "95", 14: "96", 15: "97",
-}
-_BG_MAP = {
-    0: "40", 1: "41", 2: "42", 3: "43",
-    4: "44", 5: "45", 6: "46", 7: "47",
-    8: "100", 9: "101", 10: "102", 11: "103",
-    12: "104", 13: "105", 14: "106", 15: "107",
-}
+    def export_gif(self):
+        if self.doc.frameCount < 2:
+            messagebox.showwarning(
+                "Sin animación",
+                "El documento necesita al menos 2 frames para exportar como GIF animado.\n"
+                "Añade frames desde el menú Frame → Nuevo frame.",
+            )
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".gif",
+            filetypes=[("GIF", "*.gif"), ("Todos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            doc_io.export_gif(self.doc, path)
+            messagebox.showinfo("Exportado", f"Guardado en:\n{path}")
+        except ImportError as exc:
+            messagebox.showerror("Dependencia faltante", str(exc))
+        except Exception as exc:
+            messagebox.showerror("Error al exportar", str(exc))
 
-
-def _ansi_color_seq(fg, bg):
-    f = _FG_MAP.get(fg % 16, "37")
-    b = _BG_MAP.get(bg % 16, "40")
-    return f"\x1b[{f};{b}m"
+    def export_mp4(self):
+        if self.doc.frameCount < 2:
+            messagebox.showwarning(
+                "Sin animación",
+                "El documento necesita al menos 2 frames para exportar como MP4.\n"
+                "Añade frames desde el menú Frame → Nuevo frame.",
+            )
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".mp4",
+            filetypes=[("MP4", "*.mp4"), ("Todos", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            doc_io.export_mp4(self.doc, path)
+            messagebox.showinfo("Exportado", f"Guardado en:\n{path}")
+        except ImportError as exc:
+            messagebox.showerror("Dependencia faltante", str(exc))
+        except Exception as exc:
+            messagebox.showerror("Error al exportar", str(exc))

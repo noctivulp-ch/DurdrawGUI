@@ -1,6 +1,5 @@
 import tkinter as tk
 from tkinter import ttk
-from ui.canvas import ANSI_COLORS, PALETTE_256
 
 # ── Conjuntos de caracteres ────────────────────────────────────────────────────
 
@@ -30,15 +29,15 @@ def _load_unicode_chars(*block_names):
     return chars
 
 
-_CHARS_BLOQUES = _load_unicode_chars("Block Elements", "Box Drawing", "Geometric Shapes")
-_CHARS_BRAILLE = _load_unicode_chars("Braille Patterns")
-_CHARS_FLECHAS = _load_unicode_chars("Arrows", "Miscellaneous Symbols and Arrows")
-
-
 class ColorPanel(tk.Frame):
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent, bd=1, relief="raised", **kwargs)
         self.app = app
+
+        # Carga de charsets Unicode al crear el panel (no al importar el módulo)
+        chars_bloques = _load_unicode_chars("Block Elements", "Box Drawing", "Geometric Shapes")
+        chars_braille = _load_unicode_chars("Braille Patterns")
+        chars_flechas = _load_unicode_chars("Arrows", "Miscellaneous Symbols and Arrows")
 
         # ── Indicadores frente/fondo ───────────────────────────────────────
         top = tk.LabelFrame(self, text="Color activo")
@@ -75,9 +74,9 @@ class ColorPanel(tk.Frame):
         self._char_canvases = {}
         tabs = [
             ("Std",    _CHARS_STD,    "#EEE"),
-            ("Blq",    _CHARS_BLOQUES, "#CCFFCC"),
-            ("Bra",    _CHARS_BRAILLE, "#CCCCFF"),
-            ("Fle",    _CHARS_FLECHAS, "#FFE0AA"),
+            ("Blq",    chars_bloques, "#CCFFCC"),
+            ("Bra",    chars_braille, "#CCCCFF"),
+            ("Fle",    chars_flechas, "#FFE0AA"),
         ]
         for tab_name, chars, fg_hint in tabs:
             frame = tk.Frame(nb)
@@ -90,6 +89,10 @@ class ColorPanel(tk.Frame):
             self._char_canvases[tab_name] = (cvs, chars, fg_hint)
             cvs.bind("<Configure>", lambda e, tn=tab_name: self._build_char_grid(tn))
 
+        # ── Suscribir eventos ──────────────────────────────────────────────
+        app.bus.on("color_changed",      lambda d: self.refresh(d["char"], d["fg"], d["bg"]))
+        app.bus.on("color_mode_changed", lambda _: self.rebuild_palette())
+
     # ── Paleta de colores ──────────────────────────────────────────────────────
 
     def _build_palette_grid(self):
@@ -97,21 +100,16 @@ class ColorPanel(tk.Frame):
             w.destroy()
         self._pal_cells.clear()
 
-        color_mode = getattr(self.app, 'color_mode', '16')
-
-        if color_mode == "256":
-            palette = PALETTE_256
-            cell_size = 10
-            cols_per_row = 16
-            hint = "Clic=FG  Clic-der=BG  (xterm-256)"
-        else:
-            palette = ANSI_COLORS
-            cell_size = 20
-            cols_per_row = 8
-            hint = "Clic=FG  Clic-der=BG"
+        svc = self.app.color_service
+        palette   = svc.palette()
+        count     = svc.count()
+        is_256    = (svc.mode == "256")
+        cell_size = 10 if is_256 else 20
+        cols_per  = 16 if is_256 else 8
+        hint      = "Clic=FG  Clic-der=BG  (xterm-256)" if is_256 else "Clic=FG  Clic-der=BG"
 
         for i, hex_color in enumerate(palette):
-            r, c = divmod(i, cols_per_row)
+            r, c = divmod(i, cols_per)
             cell = tk.Canvas(self._pal_frame, width=cell_size, height=cell_size,
                              bg=hex_color, cursor="hand2", bd=0,
                              highlightthickness=1, highlightbackground="#222")
@@ -120,9 +118,9 @@ class ColorPanel(tk.Frame):
             cell.bind("<Button-3>", lambda e, idx=i: self.app.set_bg_color(idx))
             self._pal_cells.append(cell)
 
-        hint_rows = (len(palette) + cols_per_row - 1) // cols_per_row
+        hint_rows = (count + cols_per - 1) // cols_per
         tk.Label(self._pal_frame, text=hint, font=("", 7)).grid(
-            row=hint_rows, column=0, columnspan=cols_per_row, pady=2
+            row=hint_rows, column=0, columnspan=cols_per, pady=2
         )
 
     def rebuild_palette(self):
@@ -156,6 +154,6 @@ class ColorPanel(tk.Frame):
 
     def refresh(self, fg_char, fg_color, bg_color):
         self._char_label.config(text=fg_char if fg_char != " " else "' '")
-        palette = PALETTE_256 if getattr(self.app, 'color_mode', '16') == "256" else ANSI_COLORS
-        self._fg_swatch.config(bg=palette[fg_color % len(palette)])
-        self._bg_swatch.config(bg=palette[bg_color % len(palette)])
+        svc = self.app.color_service
+        self._fg_swatch.config(bg=svc.color(fg_color))
+        self._bg_swatch.config(bg=svc.color(bg_color))

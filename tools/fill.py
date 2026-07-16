@@ -1,9 +1,17 @@
 from copy import deepcopy
 from collections import deque
+from core.tool_registry import register
 
 
+@register
 class FillTool:
     name = "fill"
+    icon = "🪣"
+    label = "Relleno (G)"
+    shortcut = "g"
+    order = 3
+    separator_before = False
+    context_key = "fill"
 
     def __init__(self, app):
         self.app = app

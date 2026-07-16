@@ -1,5 +1,15 @@
+from core.tool_registry import register
+
+
+@register
 class EyedropperTool:
     name = "eyedropper"
+    icon = "💧"
+    label = "Cuentagotas (I)"
+    shortcut = "i"
+    order = 2
+    separator_before = False
+    context_key = "eyedropper"
 
     def __init__(self, app):
         self.app = app

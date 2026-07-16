@@ -2,6 +2,26 @@ STANDBY   = "standby"
 DRAWING   = "drawing"
 SCROLLING = "scrolling"
 
+
+def bresenham(x0, y0, x1, y1):
+    """Genera las celdas del segmento (x0,y0)→(x1,y1) por el algoritmo de Bresenham."""
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    sx = 1 if x0 < x1 else -1
+    sy = 1 if y0 < y1 else -1
+    err = dx - dy
+    while True:
+        yield (x0, y0)
+        if x0 == x1 and y0 == y1:
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            x0 += sx
+        if e2 < dx:
+            err += dx
+            y0 += sy
+
 _ALT_MASK   = 0x0008
 _CTRL_MASK  = 0x0004
 
@@ -75,14 +95,15 @@ class ToolState:
 
     def mouse_leave(self, event):
         self._canvas.clear_cursor_highlight()
+        self._canvas._canvas.config(cursor="none")
 
     def mouse_wheel(self, event):
         """Rueda del ratón: zoom si Ctrl, scroll vertical si no."""
         if event.state & _CTRL_MASK:
             if event.delta > 0 or event.num == 4:
-                self._canvas.app.zoom_in()
+                self._canvas.app.zoom_in(event.x, event.y)
             else:
-                self._canvas.app.zoom_out()
+                self._canvas.app.zoom_out(event.x, event.y)
         else:
             delta = -3 if (event.delta > 0 or event.num == 4) else 3
             self._canvas.set_view(

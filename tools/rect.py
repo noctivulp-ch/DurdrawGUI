@@ -1,8 +1,16 @@
 from copy import deepcopy
+from core.tool_registry import register
 
 
+@register
 class RectTool:
     name = "rect"
+    icon = "▭"
+    label = "Rectángulo (R)"
+    shortcut = "r"
+    order = 6
+    separator_before = False
+    context_key = "shape"
 
     def __init__(self, app):
         self.app = app

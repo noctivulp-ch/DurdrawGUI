@@ -1,9 +1,17 @@
 import math
 from copy import deepcopy
+from core.tool_registry import register
 
 
+@register
 class EllipseTool:
     name = "ellipse"
+    icon = "◯"
+    label = "Elipse (O)"
+    shortcut = "o"
+    order = 7
+    separator_before = False
+    context_key = "shape"
 
     def __init__(self, app):
         self.app = app

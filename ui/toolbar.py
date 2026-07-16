@@ -1,18 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
-
-
-TOOLS = [
-    ("pencil",      "✏",  "Lápiz (B)"),
-    ("eraser",      "⬜", "Borrador (E)"),
-    ("eyedropper",  "💧", "Cuentagotas (I)"),
-    ("fill",        "🪣", "Relleno (G)"),
-    ("selection",   "⬚",  "Selección (S)"),
-    None,   # separador
-    ("line",        "╱",  "Línea (L)"),
-    ("rect",        "▭",  "Rectángulo (R)"),
-    ("ellipse",     "◯",  "Elipse (O)"),
-]
+from core.tool_registry import get_ordered
 
 
 class ToolBar(tk.Frame):
@@ -21,17 +9,17 @@ class ToolBar(tk.Frame):
         self.app = app
         self._buttons = {}
 
-        for entry in TOOLS:
+        for entry in get_ordered():
             if entry is None:
                 ttk.Separator(self, orient="horizontal").pack(fill="x", pady=4, padx=2)
                 continue
-            name, icon, tooltip = entry
+            cls = entry
             btn = tk.Button(
-                self, text=icon, width=3, font=("", 14),
-                relief="flat", command=lambda n=name: self.app.select_tool(n),
+                self, text=cls.icon, width=3, font=("", 14),
+                relief="flat", command=lambda n=cls.name: self.app.select_tool(n),
             )
             btn.pack(pady=2, padx=2)
-            self._buttons[name] = btn
+            self._buttons[cls.name] = btn
 
     def highlight(self, tool_name):
         for name, btn in self._buttons.items():
