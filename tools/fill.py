@@ -1,6 +1,9 @@
 from copy import deepcopy
 from collections import deque
+import core.log as log
 from core.tool_registry import register
+
+_log = log.get("tools")
 
 
 @register
@@ -24,6 +27,7 @@ class FillTool:
         self._snapshot = (deepcopy(frame.content), deepcopy(frame.newColorMap))
 
         target_ch  = frame.content[row][col]
+        _log.debug(f"fill.start  ({col},{row})  target='{target_ch}'")
         target_fg, target_bg = frame.newColorMap[row][col]
         new_ch  = self.app.fg_char
         new_fg  = self.app.fg_color
@@ -56,6 +60,7 @@ class FillTool:
         for c, r in changed:
             self.app.canvas_widget.update_cell(c, r, new_ch, new_fg, new_bg)
 
+        _log.debug(f"fill.end  cells_filled={len(changed)}")
         self._push_undo(frame)
 
     def on_drag(self, col, row):

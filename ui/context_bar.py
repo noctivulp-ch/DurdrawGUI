@@ -10,7 +10,7 @@ class _ZoomWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setContentsMargins(4, 6, 4, 6)
         self._lbl = QLabel("100%")
         self._lbl.setMinimumWidth(50)
         layout.addWidget(QLabel("Zoom:"))
@@ -26,11 +26,12 @@ class _PencilPanel(QWidget):
         super().__init__(parent)
         self.app = app
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setContentsMargins(4, 6, 4, 6)
 
         layout.addWidget(QLabel("Pincel:"))
         self._combo = QComboBox()
         self._combo.setMinimumWidth(140)
+        self._combo.setFixedHeight(24)
         self._combo.currentTextChanged.connect(self._on_changed)
         layout.addWidget(self._combo)
 

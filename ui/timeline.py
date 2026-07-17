@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel, QSlider
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QToolButton,
+                               QLabel, QSlider, QSizePolicy)
 from PySide6.QtCore    import Qt, QTimer
 
 
@@ -13,26 +14,39 @@ class Timeline(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
 
-        self._play_btn = QPushButton("▶")
-        self._play_btn.setFixedSize(28, 24)
+        # Contenedor de botones de navegación — alineado visualmente con el panel de capas
+        nav = QWidget()
+        nav.setMinimumWidth(140)   # coincide con LayerPanel.setMinimumWidth
+        nav.setMaximumWidth(240)   # crece con el splitter pero no infinitamente
+        nav_layout = QHBoxLayout(nav)
+        nav_layout.setContentsMargins(2, 4, 2, 4)
+        nav_layout.setSpacing(1)
+
+        self._play_btn = QToolButton()
+        self._play_btn.setText("▶")
         self._play_btn.setCheckable(True)
+        self._play_btn.setFixedHeight(28)
+        self._play_btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._play_btn.clicked.connect(self._toggle_play)
-        layout.addWidget(self._play_btn)
+        nav_layout.addWidget(self._play_btn)
 
         for icon, tip, slot in (
-            ("|◀", "Primer frame",  lambda: app.goto_first_frame()),
-            ("◀",  "Frame anterior",lambda: app.prev_frame()),
+            ("|◀", "Primer frame",   lambda: app.goto_first_frame()),
+            ("◀",  "Frame anterior", lambda: app.prev_frame()),
             ("▶",  "Frame siguiente",lambda: app.next_frame()),
-            ("▶|", "Último frame",  lambda: app.goto_last_frame()),
+            ("▶|", "Último frame",   lambda: app.goto_last_frame()),
         ):
-            b = QPushButton(icon); b.setFixedSize(28, 24)
-            b.setToolTip(tip); b.clicked.connect(slot)
-            layout.addWidget(b)
+            b = QToolButton()
+            b.setText(icon)
+            b.setToolTip(tip)
+            b.setFixedHeight(28)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            b.clicked.connect(slot)
+            nav_layout.addWidget(b)
 
-        self._lbl = QLabel("Frame 1/1")
-        layout.addWidget(self._lbl)
+        layout.addWidget(nav)
 
         self._fps_lbl = QLabel("FPS:")
         self._fps_slider = QSlider(Qt.Orientation.Horizontal)
@@ -45,9 +59,6 @@ class Timeline(QWidget):
         layout.addWidget(self._fps_slider)
         layout.addWidget(self._fps_val_lbl)
         layout.addStretch()
-
-    def update_display(self, cur: int, total: int):
-        self._lbl.setText(f"Frame {cur}/{total}")
 
     def stop_play(self):
         self._playing = False

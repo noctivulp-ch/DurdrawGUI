@@ -8,6 +8,9 @@ transparente.
 
 from copy import deepcopy
 from core.movie import Movie
+import core.log as log
+
+_log = log.get("doc")
 
 
 class _Opts:
@@ -72,12 +75,14 @@ class Layer:
 class Document:
     """Documento activo: lista de capas sincronizadas en frames y composición."""
 
-    def __init__(self, width, height):
-        self.width  = width
-        self.height = height
+    def __init__(self, width, height, color_format="16"):
+        self.width        = width
+        self.height       = height
+        self.color_format = color_format   # "16" o "256"
         self._frame_idx   = 0   # 0-based
         self._active_idx  = 0
         self._layers      = [Layer("Fondo", width, height)]
+        _log.debug(f"Document({width}×{height}  color={color_format})")
 
     # ── Compat con Movie (app.py usa estas props) ─────────────────────────
 
@@ -178,11 +183,13 @@ class Document:
         for layer in self._layers:
             layer.add_empty_frame()
         self._frame_idx = self.frameCount - 1
+        _log.debug(f"add_empty_frame  total={self.frameCount}")
 
     def duplicate_current_frame(self):
         for layer in self._layers:
             layer.duplicate_frame(self._frame_idx)
         self._frame_idx += 1
+        _log.debug(f"duplicate_frame  idx={self._frame_idx}  total={self.frameCount}")
 
     def delete_frame(self):
         if self.frameCount <= 1:
@@ -191,27 +198,33 @@ class Document:
         for layer in self._layers:
             layer.delete_frame(idx)
         self._frame_idx = min(idx, self.frameCount - 1)
+        _log.debug(f"delete_frame  idx={idx}  total={self.frameCount}")
 
     # ── Gestión de capas ──────────────────────────────────────────────────
 
     def add_layer(self, name=None):
         name = name or f"Capa {len(self._layers) + 1}"
         layer = Layer(name, self.width, self.height)
-        # Añadir frames vacíos para igualar el conteo global
         for _ in range(self.frameCount - 1):
             layer.add_empty_frame()
         insert_at = self._active_idx + 1
         self._layers.insert(insert_at, layer)
         self._active_idx = insert_at
+        _log.debug(f"add_layer  name='{name}'  idx={insert_at}  total={len(self._layers)}")
 
     def delete_active_layer(self):
         if len(self._layers) <= 1:
             return
+        name = self._layers[self._active_idx].name
         self._layers.pop(self._active_idx)
         self._active_idx = min(self._active_idx, len(self._layers) - 1)
+        _log.debug(f"delete_layer  name='{name}'  total={len(self._layers)}")
 
     def set_active_layer(self, idx):
+        old = self._active_idx
         self._active_idx = max(0, min(idx, len(self._layers) - 1))
+        if old != self._active_idx:
+            _log.debug(f"set_active_layer  {old}→{self._active_idx}  name='{self.active_layer.name}'")
 
     def move_layer(self, src_idx, dst_idx):
         dst_idx = max(0, min(dst_idx, len(self._layers) - 1))
@@ -220,9 +233,11 @@ class Document:
         layer = self._layers.pop(src_idx)
         self._layers.insert(dst_idx, layer)
         self._active_idx = dst_idx
+        _log.debug(f"move_layer  {src_idx}→{dst_idx}  name='{layer.name}'")
 
     def _reset_layers(self, layers):
         """Reemplaza la lista de capas directamente. Solo para deserialización (core/io.py)."""
         self._layers      = layers
         self._active_idx  = 0
         self._frame_idx   = 0
+        _log.debug(f"_reset_layers  n={len(layers)}")

@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
-                               QPushButton, QListWidget, QListWidgetItem,
-                               QLabel, QCheckBox)
+                               QToolButton, QListWidget, QListWidgetItem,
+                               QLabel, QSizePolicy)
 from PySide6.QtCore    import Qt
 
 
@@ -21,16 +21,21 @@ class LayerPanel(QWidget):
         layout.addWidget(self._list)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(1)
+        btn_row.setContentsMargins(2, 0, 2, 2)
         for icon, tip, slot in (
             ("+", "Nueva capa",    app.add_layer),
             ("−", "Borrar capa",   app.delete_layer),
             ("↑", "Subir capa",    app.move_layer_up),
             ("↓", "Bajar capa",    app.move_layer_down),
         ):
-            b = QPushButton(icon); b.setFixedSize(28, 24)
-            b.setToolTip(tip); b.clicked.connect(slot)
+            b = QToolButton()
+            b.setText(icon)
+            b.setFixedHeight(28)
+            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
             btn_row.addWidget(b)
-        btn_row.addStretch()
         layout.addLayout(btn_row)
 
         app.bus.on("layers_changed", lambda _: self.refresh())

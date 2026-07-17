@@ -10,6 +10,8 @@ import core.log as log
 log.info("=" * 60)
 log.info(f"DurdrawGUI iniciando  (Python {sys.version.split()[0]})")
 log.info("=" * 60)
+log.info(f"Tags de log activos: {log.active_tags()}  (DURDRAW_LOG={os.environ.get('DURDRAW_LOG', '<no definido>')})")
+log.info(f"Directorio de logs:  {log.log_dir()}")
 
 from PySide6.QtWidgets import QApplication
 from ui.app import App

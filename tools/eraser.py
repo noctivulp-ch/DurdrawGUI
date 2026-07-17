@@ -1,6 +1,9 @@
 from copy import deepcopy
+import core.log as log
 from core.tool_registry import register
 from tools.base import bresenham
+
+_log = log.get("tools")
 
 
 @register
@@ -26,6 +29,7 @@ class EraserTool:
         )
         self._prev_cell = None
         self._button = button
+        _log.debug(f"eraser.start  ({col},{row})  btn={button}")
         self._erase(col, row, button)
 
     def on_drag(self, col, row):
@@ -36,6 +40,7 @@ class EraserTool:
             self._erase(c, r, self._button)
 
     def on_end(self, col, row, button):
+        _log.debug(f"eraser.end  ({col},{row})")
         self._push_undo()
         self._prev_cell = None
 

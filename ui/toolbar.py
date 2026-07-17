@@ -21,6 +21,7 @@ class ToolBar(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 4, 2, 4)
         layout.setSpacing(2)
+        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._btns: dict[str, QPushButton] = {}
         for name, icon, tip in _TOOLS:
             btn = QPushButton(icon)

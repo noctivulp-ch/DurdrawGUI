@@ -1,6 +1,9 @@
 from copy import deepcopy
+import core.log as log
 from core.tool_registry import register
 from tools.base import bresenham as _bresenham
+
+_log = log.get("tools")
 
 
 @register
@@ -21,6 +24,7 @@ class LineTool:
     def on_start(self, col, row, button):
         self._start = (col, row)
         self._button = button
+        _log.debug(f"line.start  ({col},{row})  btn={button}")
 
     def on_drag(self, col, row):
         if self._start is None:
@@ -36,6 +40,7 @@ class LineTool:
         self.app.canvas_widget.clear_preview()
         c0, r0 = self._start
         cells = list(_bresenham(c0, r0, col, row))
+        _log.debug(f"line.end  ({c0},{r0})→({col},{row})  len={len(cells)}")
         self._commit(cells, button)
         self._start = None
 

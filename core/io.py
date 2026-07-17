@@ -10,6 +10,9 @@ import gzip
 import os
 
 from core.document import Document, Layer
+import core.log as log
+
+_log = log.get("io")
 
 
 # ── Tablas de color ANSI ───────────────────────────────────────────────────────
@@ -57,8 +60,8 @@ def to_durg(doc):
     return {
         "DurGUI": {
             "version": 1,
-            "width": doc.width,
-            "height": doc.height,
+            "columns": doc.width,
+            "lines": doc.height,
         },
         "layers": layers_data,
     }
@@ -80,14 +83,13 @@ def to_dur(doc):
     return {
         "DurMovie": {
             "formatVersion": 7,
-            "colorFormat": "16",
+            "colorFormat": doc.color_format,
             "preferredFont": "fixed",
             "encoding": "utf-8",
             "name": "", "artist": "",
             "framerate": 10,
-            "sizeX": doc.width,
-            "sizeY": doc.height,
-            "extra": None,
+            "columns": doc.width,
+            "lines": doc.height,
             "frames": frames_data,
         }
     }
@@ -96,8 +98,9 @@ def to_dur(doc):
 def from_dur(data):
     """Crea un Document de una sola capa a partir de un dict .dur."""
     dm = data["DurMovie"]
-    w, h = dm["sizeX"], dm["sizeY"]
-    doc = Document(w, h)
+    w, h = dm["columns"], dm["lines"]
+    color_fmt = str(dm.get("colorFormat", "16"))
+    doc = Document(w, h, color_format=color_fmt)
     layer = doc.layers[0]
     for i, fd in enumerate(dm["frames"]):
         if i == 0:
@@ -119,8 +122,8 @@ def from_dur(data):
 
 def from_durg(data):
     """Crea un Document con múltiples capas a partir de un dict .durg."""
-    w = data["DurGUI"]["width"]
-    h = data["DurGUI"]["height"]
+    dg = data["DurGUI"]
+    w, h = dg["columns"], dg["lines"]
     doc = Document(w, h)
     layers = []
 
@@ -151,26 +154,37 @@ def from_durg(data):
 
 def load(path):
     """Carga un .durg o .dur desde disco. Devuelve un Document."""
+    size = os.path.getsize(path)
+    _log.info(f"load  path={path}  size={size:,}B")
     try:
         with gzip.open(path, "rt", encoding="utf-8") as f:
             data = json.load(f)
+        _log.debug("load  formato: gzip")
     except gzip.BadGzipFile:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    if "DurGUI" in data:
+        _log.debug("load  formato: json plano")
+    fmt = "durg" if "DurGUI" in data else "dur"
+    _log.info(f"load  fmt={fmt}")
+    if fmt == "durg":
         return from_durg(data)
     return from_dur(data)
 
 
 def save(doc, path):
     """Guarda en .durg (con capas) o .dur (aplanado) según la extensión."""
-    payload = to_dur(doc) if path.endswith(".dur") else to_durg(doc)
+    fmt = "dur" if path.endswith(".dur") else "durg"
+    _log.info(f"save  path={path}  fmt={fmt}  layers={len(doc.layers)}  frames={doc.frameCount}")
+    payload = to_dur(doc) if fmt == "dur" else to_durg(doc)
     with gzip.open(path, "wt", encoding="utf-8") as f:
         json.dump(payload, f)
+    size = os.path.getsize(path)
+    _log.info(f"save  ok  size={size:,}B")
 
 
 def export_ansi(doc, path):
     """Exporta el compuesto del frame actual como archivo ANSI."""
+    _log.info(f"export_ansi  path={path}")
     frame = doc.composite_frame()
     lines = []
     for row in range(frame.height):
@@ -257,11 +271,13 @@ def _require_timeline(doc, fmt):
 
 def export_png(doc, path):
     """Exporta el frame actual como imagen PNG."""
+    _log.info(f"export_png  path={path}")
     _frame_to_pil(doc.composite_frame(), _load_font()).save(path, "PNG")
 
 
 def export_jpeg(doc, path, quality=90):
     """Exporta el frame actual como imagen JPEG."""
+    _log.info(f"export_jpeg  path={path}  quality={quality}")
     _frame_to_pil(doc.composite_frame(), _load_font()).save(path, "JPEG", quality=quality)
 
 
@@ -269,6 +285,7 @@ def export_jpeg(doc, path, quality=90):
 
 def export_gif(doc, path, frame_delay_ms=100):
     """Exporta todos los frames como GIF animado. Requiere al menos 2 frames."""
+    _log.info(f"export_gif  path={path}  frames={doc.frameCount}  delay={frame_delay_ms}ms")
     _require_timeline(doc, "GIF")
     from PIL import Image
     font = _load_font()
@@ -289,6 +306,7 @@ def export_gif(doc, path, frame_delay_ms=100):
 
 def export_mp4(doc, path, fps=10):
     """Exporta todos los frames como vídeo MP4. Requiere al menos 2 frames e imageio+ffmpeg."""
+    _log.info(f"export_mp4  path={path}  frames={doc.frameCount}  fps={fps}")
     _require_timeline(doc, "MP4")
     try:
         import imageio

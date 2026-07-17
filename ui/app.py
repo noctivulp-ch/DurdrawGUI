@@ -2,8 +2,8 @@ import os
 
 from PySide6.QtWidgets import (QMainWindow, QWidget, QSplitter,
                                QVBoxLayout, QMessageBox, QFileDialog)
-from PySide6.QtCore    import Qt, QKeyCombination
-from PySide6.QtGui     import QKeySequence, QShortcut, QCloseEvent
+from PySide6.QtCore    import Qt, QTimer
+from PySide6.QtGui     import QKeySequence, QShortcut, QCloseEvent, QAction
 
 from core.document      import Document
 from core.clipboard     import ClipboardManager
@@ -11,6 +11,9 @@ from core.color_service import ColorService
 from core.event_bus     import EventBus
 from core.tool_registry import create_all
 from core.brush         import BrushLibrary
+from core.config        import AppConfig
+from core.shortcuts     import ShortcutManager
+from core.theme         import ThemeService
 from commands.commands  import CommandHistory
 import core.io          as doc_io
 import core.log         as log
@@ -32,6 +35,9 @@ from ui.context_bar import ContextBar
 from ui.statusbar   import StatusBar
 from ui.timeline    import Timeline
 from ui.dialogs     import NewCanvasDialog
+from ui.minimap     import MinimapOverlay
+from ui.preferences import PreferencesDialog
+from ui.char_panel  import CharPanel
 
 DEFAULT_W = 80
 DEFAULT_H = 24
@@ -45,8 +51,17 @@ class App(QMainWindow):
         self.resize(1200, 700)
         self.setMinimumSize(900, 600)
 
+        # ── Configuración y atajos ─────────────────────────────────────────
+        self.config       = AppConfig()
+        self.shortcut_mgr = ShortcutManager()
+        # bus se crea antes que theme_service porque éste emite eventos
+        self.bus          = EventBus()
+        self.theme_service = ThemeService(self.config, self.bus)
+        self.theme_service.apply_current()
+        self._actions:       dict[str, QAction]   = {}
+        self._shortcut_objs: dict[str, QShortcut] = {}
+
         # ── Servicios y modelo ─────────────────────────────────────────────
-        self.bus           = EventBus()
         self.color_service = ColorService(self.bus)
         self._dirty        = False
         self._saved_path   = None
@@ -75,11 +90,11 @@ class App(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self.timeline = Timeline(central, self)
-        main_layout.addWidget(self.timeline)
-
         splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(splitter, stretch=1)
+
+        self.timeline = Timeline(central, self)
+        main_layout.addWidget(self.timeline)
 
         # Panel izquierdo: capas
         self.layer_panel = LayerPanel(splitter, self)
@@ -107,12 +122,23 @@ class App(QMainWindow):
         inner.addWidget(self.toolbar)
         inner.addWidget(self.color_panel)
         right_layout.addWidget(inner)
+        self.char_panel = CharPanel(right_w, self)
+        right_layout.addWidget(self.char_panel, stretch=1)
         splitter.addWidget(right_w)
 
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([160, 800, 240])
+
+        # ── Minimapa ──────────────────────────────────────────────────────
+        self.minimap = MinimapOverlay(self.config)
+        self.canvas_widget.minimap = self.minimap
+
+        # ── Fuente del canvas (desde configuración) ───────────────────────
+        self.canvas_widget.set_font_family(
+            self.config.get("canvas_font", "DejaVu Sans Mono")
+        )
 
         # ── Atajos ────────────────────────────────────────────────────────
         self._bind_shortcuts()
@@ -128,53 +154,62 @@ class App(QMainWindow):
     # ── Menú ──────────────────────────────────────────────────────────────
 
     def _build_menu(self):
-        mb = self.menuBar()
+        sm   = self.shortcut_mgr
+        acts = self._actions
+        mb   = self.menuBar()
+
+        def add(menu, label, action_id, fn):
+            a = menu.addAction(label, fn, QKeySequence(sm.key(action_id)))
+            acts[action_id] = a
+            return a
 
         fm = mb.addMenu("Archivo")
-        fm.addAction("Nuevo lienzo…",    self.new_file,   QKeySequence("Ctrl+N"))
-        fm.addAction("Abrir…",           self.open_file,  QKeySequence("Ctrl+O"))
-        fm.addAction("Guardar…",         self.save,       QKeySequence("Ctrl+S"))
+        add(fm, "Nuevo lienzo…", "file_new",  self.new_file)
+        add(fm, "Abrir…",        "file_open", self.open_file)
+        add(fm, "Guardar…",      "file_save", self.save)
         fm.addSeparator()
         exp = fm.addMenu("Exportar")
-        exp.addAction("ANSI…",           self.export_ansi)
-        exp.addAction("PNG…",            self.export_png)
-        exp.addAction("JPEG…",           self.export_jpeg)
+        exp.addAction("ANSI…",        self.export_ansi)
+        exp.addAction("PNG…",         self.export_png)
+        exp.addAction("JPEG…",        self.export_jpeg)
         exp.addSeparator()
-        exp.addAction("GIF animado…",    self.export_gif)
-        exp.addAction("MP4…",            self.export_mp4)
+        exp.addAction("GIF animado…", self.export_gif)
+        exp.addAction("MP4…",         self.export_mp4)
         fm.addSeparator()
-        fm.addAction("Salir",            self.close,      QKeySequence("Ctrl+Q"))
+        add(fm, "Salir", "file_quit", self.close)
 
         em = mb.addMenu("Edición")
-        em.addAction("Deshacer",         self.undo,               QKeySequence("Ctrl+Z"))
-        em.addAction("Rehacer",          self.redo,               QKeySequence("Ctrl+Y"))
+        add(em, "Deshacer",         "undo",        self.undo)
+        add(em, "Rehacer",          "redo",        self.redo)
         em.addSeparator()
-        em.addAction("Copiar",           self.copy_selection,     QKeySequence("Ctrl+C"))
-        em.addAction("Cortar",           self.cut_selection,      QKeySequence("Ctrl+X"))
-        em.addAction("Pegar",            self.paste_clipboard,    QKeySequence("Ctrl+V"))
+        add(em, "Copiar",           "copy",        self.copy_selection)
+        add(em, "Cortar",           "cut",         self.cut_selection)
+        add(em, "Pegar",            "paste",       self.paste_clipboard)
         em.addSeparator()
-        em.addAction("Seleccionar todo", self.select_all,         QKeySequence("Ctrl+A"))
-        em.addAction("Deseleccionar",    self.deselect,           QKeySequence("Ctrl+D"))
+        add(em, "Seleccionar todo", "select_all",  self.select_all)
+        add(em, "Deseleccionar",    "deselect",    self.deselect)
+        em.addSeparator()
+        em.addAction("Preferencias…", self.open_preferences)
 
         frm = mb.addMenu("Frame")
-        frm.addAction("Nuevo frame",     self.add_frame,          QKeySequence("Alt+N"))
-        frm.addAction("Duplicar frame",  self.duplicate_frame,    QKeySequence("Alt+D"))
-        frm.addAction("Eliminar frame",  self.delete_frame,       QKeySequence("Alt+C"))
+        add(frm, "Nuevo frame",    "frame_new",       self.add_frame)
+        add(frm, "Duplicar frame", "frame_duplicate", self.duplicate_frame)
+        add(frm, "Eliminar frame", "frame_delete",    self.delete_frame)
         frm.addSeparator()
-        frm.addAction("Anterior",        self.prev_frame,         QKeySequence("Left"))
-        frm.addAction("Siguiente",       self.next_frame,         QKeySequence("Right"))
+        add(frm, "Anterior",  "frame_prev", self.prev_frame)
+        add(frm, "Siguiente", "frame_next", self.next_frame)
 
         lm = mb.addMenu("Capas")
-        lm.addAction("Nueva capa",       self.add_layer)
-        lm.addAction("Eliminar capa",    self.delete_layer)
+        lm.addAction("Nueva capa",    self.add_layer)
+        lm.addAction("Eliminar capa", self.delete_layer)
         lm.addSeparator()
-        lm.addAction("Subir capa",       self.move_layer_up)
-        lm.addAction("Bajar capa",       self.move_layer_down)
+        lm.addAction("Subir capa",    self.move_layer_up)
+        lm.addAction("Bajar capa",    self.move_layer_down)
 
         vm = mb.addMenu("Vista")
-        vm.addAction("Acercar",          self.zoom_in,    QKeySequence("Ctrl+="))
-        vm.addAction("Alejar",           self.zoom_out,   QKeySequence("Ctrl+-"))
-        vm.addAction("Zoom 1:1",         self.zoom_reset, QKeySequence("Ctrl+0"))
+        add(vm, "Acercar",  "zoom_in",    self.zoom_in)
+        add(vm, "Alejar",   "zoom_out",   self.zoom_out)
+        add(vm, "Zoom 1:1", "zoom_reset", self.zoom_reset)
 
         self._grid_act = vm.addAction("Mostrar rejilla")
         self._grid_act.setCheckable(True)
@@ -188,25 +223,65 @@ class App(QMainWindow):
     # ── Atajos adicionales (teclas sueltas que el menú no puede registrar) ─
 
     def _bind_shortcuts(self):
-        def sc(key, fn):
-            s = QShortcut(QKeySequence(key), self)
-            s.activated.connect(fn)
+        sm   = self.shortcut_mgr
+        objs = self._shortcut_objs
 
-        sc("B",       lambda: self.select_tool("pencil"))
-        sc("E",       lambda: self.select_tool("eraser"))
-        sc("I",       lambda: self.select_tool("eyedropper"))
-        sc("G",       lambda: self.select_tool("fill"))
-        sc("S",       lambda: self.select_tool("selection"))
-        sc("X",       self.swap_colors)
-        sc("L",       lambda: self.select_tool("line"))
-        sc("R",       lambda: self.select_tool("rect"))
-        sc("O",       lambda: self.select_tool("ellipse"))
-        sc("1",       self.zoom_reset)
-        sc("Escape",  self.deselect)
-        sc("Delete",  self.clear_selection)
-        sc("Home",    self.goto_first_frame)
-        sc("End",     self.goto_last_frame)
-        sc("Return",  self.timeline._toggle_play)
+        def sc(action_id, fn):
+            s = QShortcut(QKeySequence(sm.key(action_id)), self)
+            s.activated.connect(fn)
+            objs[action_id] = s
+
+        sc("tool_pencil",     lambda: self.select_tool("pencil"))
+        sc("tool_eraser",     lambda: self.select_tool("eraser"))
+        sc("tool_eyedropper", lambda: self.select_tool("eyedropper"))
+        sc("tool_fill",       lambda: self.select_tool("fill"))
+        sc("tool_selection",  lambda: self.select_tool("selection"))
+        sc("tool_line",       lambda: self.select_tool("line"))
+        sc("tool_rect",       lambda: self.select_tool("rect"))
+        sc("tool_ellipse",    lambda: self.select_tool("ellipse"))
+        sc("swap_colors",     self.swap_colors)
+        sc("zoom_reset_1",    self.zoom_reset)
+        sc("redo_alt",        self.redo)
+        sc("deselect_esc",    self.deselect)
+        sc("clear_selection", self.clear_selection)
+        sc("frame_first",     self.goto_first_frame)
+        sc("frame_last",      self.goto_last_frame)
+        sc("play_toggle",     self.timeline._toggle_play)
+        sc("center_view",     self.center_view)
+        sc("minimap_toggle",  self._toggle_minimap)
+
+    def _rebuild_shortcuts(self):
+        """Actualiza teclas tras cambios en Preferencias (sin recrear objetos)."""
+        sm = self.shortcut_mgr
+        for action_id, action in self._actions.items():
+            action.setShortcut(QKeySequence(sm.key(action_id)))
+        for action_id, shortcut in self._shortcut_objs.items():
+            shortcut.setKey(QKeySequence(sm.key(action_id)))
+
+    # ── Preferencias ──────────────────────────────────────────────────────
+
+    def open_preferences(self):
+        def on_accept():
+            self.shortcut_mgr.save()
+            self.config.save()
+            self._rebuild_shortcuts()
+            self.theme_service.apply(self.config.get("theme", "dark"))
+            self.canvas_widget.set_font_family(
+                self.config.get("canvas_font", "DejaVu Sans Mono")
+            )
+
+        dlg = PreferencesDialog(self, self.shortcut_mgr, self.config,
+                                on_accept=on_accept)
+        dlg.exec()
+
+    # ── Vista ─────────────────────────────────────────────────────────────
+
+    def center_view(self):
+        self.canvas_widget.center_view()
+
+    def _toggle_minimap(self):
+        self.minimap.toggle()
+        self.canvas_widget.update()
 
     # ── closeEvent (WM kill, Ctrl+Q, niri kill — todo pasa por aquí) ──────
 
@@ -274,7 +349,9 @@ class App(QMainWindow):
     def select_tool(self, name: str):
         if name not in self._tools:
             return
+        prev = getattr(self.active_tool, "name", "?")
         self.active_tool = self._tools[name]
+        log.debug(f"select_tool  {prev} → {name}")
         self.toolbar.highlight(name)
         self.context_bar.switch(name)
         self.statusbar.set_tool(name)
@@ -376,7 +453,6 @@ class App(QMainWindow):
     def _refresh_timeline(self):
         cur   = self.doc.currentFrameNumber
         total = self.doc.frameCount
-        self.timeline.update_display(cur, total)
         self.statusbar.set_frame(cur, total)
 
     # ── Capas ──────────────────────────────────────────────────────────────
@@ -433,6 +509,7 @@ class App(QMainWindow):
         self._refresh_timeline()
         self._refresh_color_panel()
         self.setWindowTitle("DurdrawGUI — Sin título")
+        self.canvas_widget.center_view()
         log.info(f"new_file listo {w}×{h}")
 
     def open_file(self):
@@ -446,6 +523,7 @@ class App(QMainWindow):
             return
         try:
             self.doc         = doc_io.load(path)
+            self.color_service.set_mode(self.doc.color_format)
             self.history     = self._new_history()
             self._saved_path = path
             self._dirty      = False
@@ -453,7 +531,8 @@ class App(QMainWindow):
             self.bus.emit("layers_changed", None)
             self._goto_frame(1)
             self.setWindowTitle(f"DurdrawGUI — {os.path.basename(path)}")
-            log.info(f"open_file OK  {self.doc.width}×{self.doc.height}")
+            self.canvas_widget.center_view()
+            log.info(f"open_file OK  {self.doc.width}×{self.doc.height}  color={self.doc.color_format}")
         except Exception as exc:
             log.error(f"open_file ERROR: {exc}")
             QMessageBox.critical(self, "Error al abrir", str(exc))

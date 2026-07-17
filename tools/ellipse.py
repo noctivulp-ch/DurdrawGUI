@@ -1,6 +1,9 @@
 import math
 from copy import deepcopy
+import core.log as log
 from core.tool_registry import register
+
+_log = log.get("tools")
 
 
 @register
