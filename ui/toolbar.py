@@ -1,15 +1,17 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PySide6.QtCore    import Qt
 
+from core.icons import get_icon
+
 _TOOLS = [
-    ("pencil",     "✏",  "Lápiz (B)"),
-    ("eraser",     "⌫",  "Borrador (E)"),
-    ("fill",       "🪣", "Relleno (G)"),
-    ("eyedropper", "💧", "Cuentagotas (I)"),
-    ("selection",  "⬚",  "Selección (S)"),
-    ("line",       "╱",  "Línea (L)"),
-    ("rect",       "□",  "Rectángulo (R)"),
-    ("ellipse",    "○",  "Elipse (O)"),
+    ("pencil",     "Lápiz (B)"),
+    ("eraser",     "Borrador (E)"),
+    ("fill",       "Relleno (G)"),
+    ("eyedropper", "Cuentagotas (I)"),
+    ("selection",  "Selección (S)"),
+    ("line",       "Línea (L)"),
+    ("rect",       "Rectángulo (R)"),
+    ("ellipse",    "Elipse (O)"),
 ]
 
 
@@ -23,8 +25,9 @@ class ToolBar(QWidget):
         layout.setSpacing(2)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._btns: dict[str, QPushButton] = {}
-        for name, icon, tip in _TOOLS:
-            btn = QPushButton(icon)
+        for name, tip in _TOOLS:
+            btn = QPushButton()
+            btn.setIcon(get_icon(name))
             btn.setToolTip(tip)
             btn.setFixedSize(42, 36)
             btn.setCheckable(True)

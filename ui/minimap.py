@@ -97,30 +97,31 @@ class MinimapOverlay:
         iy = panel_iy + (panel_h - img_h) // 2
         painter.drawImage(ix, iy, self._image)
 
-        # Indicador de viewport en coords de imagen
+        # Indicador de viewport en coords de imagen.
+        # Se calculan las dos ESQUINAS y se clampean individualmente — esto
+        # maneja correctamente view_col/row negativos (doc más pequeño que la
+        # vista, o centrado) y desbordamientos por abajo/derecha.
         scale_x = img_w / doc.width
         scale_y = img_h / doc.height
-        cw      = canvas._cell_w
-        ch      = canvas._cell_h
         vc      = canvas._view_col
         vr      = canvas._view_row
-        vis_c   = max(1, canvas.width()  // cw)
-        vis_r   = max(1, canvas.height() // ch)
+        vis_c   = max(1, canvas.width()  // canvas._cell_w)
+        vis_r   = max(1, canvas.height() // canvas._cell_h)
 
-        vp_x = ix + int(vc * scale_x)
-        vp_y = iy + int(vr * scale_y)
-        vp_w = max(1, int(vis_c * scale_x))
-        vp_h = max(1, int(vis_r * scale_y))
+        x0 = ix + int(vc           * scale_x)
+        y0 = iy + int(vr           * scale_y)
+        x1 = ix + int((vc + vis_c) * scale_x)
+        y1 = iy + int((vr + vis_r) * scale_y)
 
-        # Clamp al área de la imagen
-        vp_x = max(ix, min(vp_x, ix + img_w - 1))
-        vp_y = max(iy, min(vp_y, iy + img_h - 1))
-        vp_w = min(vp_w, ix + img_w - vp_x)
-        vp_h = min(vp_h, iy + img_h - vp_y)
+        x0 = max(ix, min(x0, ix + img_w))
+        y0 = max(iy, min(y0, iy + img_h))
+        x1 = max(ix, min(x1, ix + img_w))
+        y1 = max(iy, min(y1, iy + img_h))
 
-        painter.setPen(QPen(QColor(_VP_CLR), 1, Qt.PenStyle.SolidLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(vp_x, vp_y, vp_w - 1, vp_h - 1)
+        if x1 > x0 and y1 > y0:
+            painter.setPen(QPen(QColor(_VP_CLR), 1, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(x0, y0, x1 - x0, y1 - y0)
 
     # ── Construcción de imagen ─────────────────────────────────────────
 

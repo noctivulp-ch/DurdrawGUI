@@ -1055,8 +1055,19 @@ class AsciiCanvas(QWidget):
             dy = (y - oy) // self._cell_h
             self.set_view(self._scroll_view_orig[0] - dx,
                           self._scroll_view_orig[1] - dy)
+            return  # SizeAllCursor ya está activo; no sobreescribir
         else:
             self.update_cursor(col, row)
+
+        # Cursor del sistema: cruceta fuera del área del documento, invisible dentro
+        # (el canvas dibuja su propio indicador de celda sobre el documento)
+        if not self._space_held:
+            doc   = self.app.doc
+            shape = (Qt.CursorShape.BlankCursor
+                     if 0 <= col < doc.width and 0 <= row < doc.height
+                     else Qt.CursorShape.CrossCursor)
+            if self.cursor().shape() != shape:
+                self.setCursor(shape)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self._tool_state == _DRAWING:
