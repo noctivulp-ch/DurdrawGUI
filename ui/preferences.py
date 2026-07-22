@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QSizePolicy, QFontComboBox,
 )
 from PySide6.QtCore import Qt, QKeyCombination
-from PySide6.QtGui  import QFont, QKeySequence, QFontDatabase
+from PySide6.QtGui  import QFont, QKeySequence, QFontDatabase, QColor
 
-from core.shortcuts import ACTIONS, ShortcutManager
+from core.shortcuts import ACTIONS, CATEGORY_ORDER, ShortcutManager
 from core.config    import AppConfig
 from core.theme     import NAMES as THEME_NAMES, SYSTEM, DARK, LIGHT
 
@@ -25,11 +25,12 @@ class ShortcutCapture(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Captura de atajo")
         self.setModal(True)
-        self.setFixedSize(320, 120)
+        self.setFixedSize(340, 130)
         self._captured: str | None = None
 
         lbl = QLabel(f"Atajo actual: <b>{current_key or '(ninguno)'}</b><br>"
-                     "Presiona la combinación de teclas deseada…")
+                     "Presiona la combinación de teclas deseada…<br>"
+                     "(Supr/Retroceso para dejar el atajo sin asignar)")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
 
@@ -50,6 +51,12 @@ class ShortcutCapture(QDialog):
         if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift,
                    Qt.Key.Key_Alt, Qt.Key.Key_Meta):
             return  # esperar tecla real
+        if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and \
+                event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self._captured = ""
+            self._status.setText("Atajo eliminado")
+            self.accept()
+            return
         mods = event.modifiers()
         seq  = QKeySequence(QKeyCombination(mods, Qt.Key(key)))
         self._captured = seq.toString(QKeySequence.SequenceFormat.PortableText)
@@ -63,33 +70,63 @@ class ShortcutCapture(QDialog):
 
 # ══════════════════════════════════════════════════════════════════════════════
 class _ShortcutsTab(QWidget):
-    """Pestaña de edición de atajos de teclado."""
+    """Pestaña de edición de atajos de teclado — agrupada por categoría,
+    hasta 2 combinaciones por acción."""
 
     _COL_LABEL = 0
-    _COL_KEY   = 1
+    _COL_KEY1  = 1
+    _COL_KEY2  = 2
 
     def __init__(self, shortcut_mgr: ShortcutManager):
         super().__init__()
-        self._mgr   = shortcut_mgr
-        self._dirty: dict[str, str] = {}   # action_id → nueva tecla (sin aplicar)
+        self._mgr = shortcut_mgr
+        # (action_id, índice 0|1) → nueva tecla (sin aplicar todavía)
+        self._dirty: dict[tuple[str, int], str] = {}
 
-        table = QTableWidget(len(ACTIONS), 2)
-        table.setHorizontalHeaderLabels(["Acción", "Atajo"])
+        by_category: dict[str, list[str]] = {}
+        for action_id in ACTIONS:
+            by_category.setdefault(shortcut_mgr.category(action_id), []).append(action_id)
+
+        # self._ids[row] es el action_id de esa fila, o None si es una
+        # cabecera de categoría (fila no editable, salteada en reset/click).
+        self._ids: list[str | None] = []
+        for category in CATEGORY_ORDER:
+            if category not in by_category:
+                continue
+            self._ids.append(None)
+            self._ids.extend(by_category[category])
+
+        table = QTableWidget(len(self._ids), 3)
+        table.setHorizontalHeaderLabels(["Acción", "Atajo 1", "Atajo 2"])
         table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
         table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
         table.setAlternatingRowColors(True)
 
-        self._ids: list[str] = list(ACTIONS.keys())
+        cat_iter = iter(c for c in CATEGORY_ORDER if c in by_category)
         for row, action_id in enumerate(self._ids):
-            label = shortcut_mgr.label(action_id)
-            key   = shortcut_mgr.key(action_id)
+            if action_id is None:
+                header = QTableWidgetItem(next(cat_iter).upper())
+                header.setFlags(Qt.ItemFlag.NoItemFlags)
+                font = header.font()
+                font.setBold(True)
+                header.setFont(font)
+                header.setBackground(QColor("#3a3a3a"))
+                header.setForeground(QColor("#e0e0e0"))
+                table.setItem(row, self._COL_LABEL, header)
+                table.setSpan(row, 0, 1, 3)
+                continue
+            label      = shortcut_mgr.label(action_id)
+            key1, key2 = shortcut_mgr.keys(action_id)
             table.setItem(row, self._COL_LABEL, QTableWidgetItem(label))
-            table.setItem(row, self._COL_KEY,   QTableWidgetItem(key))
+            table.setItem(row, self._COL_KEY1,  QTableWidgetItem(key1))
+            table.setItem(row, self._COL_KEY2,  QTableWidgetItem(key2))
 
         table.cellDoubleClicked.connect(self._on_double_click)
         self._table = table
@@ -106,35 +143,44 @@ class _ShortcutsTab(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(table)
+        layout.addWidget(QLabel("Doble clic en Atajo 1 o Atajo 2 para reasignar. Ambos son opcionales."))
         layout.addLayout(btn_row)
 
-    def _on_double_click(self, row: int, _col: int):
+    def _on_double_click(self, row: int, col: int):
+        if self._ids[row] is None or col not in (self._COL_KEY1, self._COL_KEY2):
+            return
+        index     = 0 if col == self._COL_KEY1 else 1
         action_id = self._ids[row]
-        current   = self._table.item(row, self._COL_KEY).text()
+        current   = self._table.item(row, col).text()
         dlg = ShortcutCapture(self, current)
-        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.captured:
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.captured is not None:
             new_key = dlg.captured
-            self._dirty[action_id] = new_key
-            self._table.item(row, self._COL_KEY).setText(new_key)
+            self._dirty[(action_id, index)] = new_key
+            self._table.item(row, col).setText(new_key)
 
     def _reset_selected(self):
         rows = {idx.row() for idx in self._table.selectedIndexes()}
         for row in rows:
-            action_id = self._ids[row]
-            default   = ACTIONS[action_id][1]
-            self._dirty[action_id] = default
-            self._table.item(row, self._COL_KEY).setText(default)
+            self._reset_row(row)
 
     def _reset_all(self):
-        for row, action_id in enumerate(self._ids):
-            default = ACTIONS[action_id][1]
-            self._dirty[action_id] = default
-            self._table.item(row, self._COL_KEY).setText(default)
+        for row in range(len(self._ids)):
+            self._reset_row(row)
+
+    def _reset_row(self, row: int):
+        action_id = self._ids[row]
+        if action_id is None:
+            return
+        _label, d1, d2, _cat = ACTIONS[action_id]
+        self._dirty[(action_id, 0)] = d1
+        self._dirty[(action_id, 1)] = d2
+        self._table.item(row, self._COL_KEY1).setText(d1)
+        self._table.item(row, self._COL_KEY2).setText(d2)
 
     def apply(self):
         """Aplica los cambios pendientes al ShortcutManager (sin guardar a disco)."""
-        for action_id, key in self._dirty.items():
-            self._mgr.set_key(action_id, key)
+        for (action_id, index), key in self._dirty.items():
+            self._mgr.set_key(action_id, key, index)
         self._dirty.clear()
 
 
