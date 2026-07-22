@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QLabel, QSpinBox,
                                QFileDialog, QMessageBox)
 from PySide6.QtCore    import Qt
 
-from core.brush import BUILTIN_NAMES
+from core.brush import BUILTIN_NAMES, SmartBrush as _SmartBrush
 
 
 class _ZoomWidget(QWidget):
@@ -63,21 +63,38 @@ class _PencilPanel(QWidget):
 
     def _import(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importar pincel", "", "JSON (*.json)"
+            self, "Importar pincel", "",
+            "Pinceles DurdrawGUI (*.json *.py);;JSON (*.json);;Python (*.py)"
         )
         if path:
             try:
+                if path.endswith(".py") and not self._confirm_python_brush():
+                    return
                 self.app.brush_library.import_from(path)
                 self._refresh_combo()
             except Exception as exc:
                 QMessageBox.critical(self, "Error", str(exc))
 
+    def _confirm_python_brush(self) -> bool:
+        resp = QMessageBox.warning(
+            self, "Pincel con código Python",
+            "Este archivo va a ejecutarse con los mismos privilegios que "
+            "DurdrawGUI — acceso completo a disco, red, etc. No hay sandbox.\n\n"
+            "Importalo solo si confiás en su origen (script propio o de "
+            "alguien en quien confiés).\n\n¿Continuar?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return resp == QMessageBox.StandardButton.Yes
+
     def _export(self):
         name = self._combo.currentText()
         if not name:
             return
+        ext  = ".py" if isinstance(self.app.brush_library.get(name), _SmartBrush) else ".json"
+        filt = "Python (*.py)" if ext == ".py" else "JSON (*.json)"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exportar pincel", f"{name}.json", "JSON (*.json)"
+            self, "Exportar pincel", f"{name}{ext}", filt
         )
         if path:
             try:

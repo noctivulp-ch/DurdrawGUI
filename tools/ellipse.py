@@ -46,7 +46,7 @@ class EllipseTool:
     def _commit(self, cells, button):
         frame = self.app.current_frame()
         ch = self.app.fg_char
-        fg, bg = (self.app.bg_color, self.app.fg_color) if button == 3 else (self.app.fg_color, self.app.bg_color)
+        fg, bg = self.app.fg_color, self.app.bg_color
         snap_c = deepcopy(frame.content)
         snap_m = deepcopy(frame.newColorMap)
         for c, r in cells:

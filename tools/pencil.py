@@ -1,4 +1,5 @@
 import core.log as log
+from core.brush import BrushContext
 from core.tool_registry import register
 from tools.base import bresenham
 
@@ -41,15 +42,19 @@ class PencilTool:
 
     def _paint(self, col, row, button):
         frame = self.app.current_frame()
-        ch = self.app.fg_char
-        if button == 3:
-            fg, bg = self.app.bg_color, self.app.fg_color
-        else:
-            fg, bg = self.app.fg_color, self.app.bg_color
         brush = self.app.active_brush
-        for dr, dc in brush.cells:
+        ctx = BrushContext(frame, col, row, self.app.fg_char, self.app.fg_color, self.app.bg_color)
+        try:
+            cells = brush.paint(ctx)
+        except Exception as exc:
+            _log.warning(f"pincel '{brush.name}' falló en paint(): {exc}")
+            cells = []
+        for dr, dc, ch, fg, bg in cells:
             r, c = row + dr, col + dc
             if 0 <= c < frame.width and 0 <= r < frame.height:
+                ch = ch if ch is not None else self.app.fg_char
+                fg = fg if fg is not None else self.app.fg_color
+                bg = bg if bg is not None else self.app.bg_color
                 if (r, c) not in self._undo_cells:
                     self._undo_cells[(r, c)] = (
                         frame.content[r][c],

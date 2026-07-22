@@ -1,5 +1,6 @@
 from copy import deepcopy
 import core.log as log
+from core.brush import BrushContext
 from core.tool_registry import register
 from tools.base import bresenham
 
@@ -46,17 +47,22 @@ class EraserTool:
 
     def _erase(self, col, row, button=1):
         frame = self.app.current_frame()
-        if button == 3:
-            ch, fg, bg = self.app.fg_char, self.app.fg_color, self.app.bg_color
-        else:
-            ch, fg, bg = " ", 7, 0
         brush = self.app.active_brush
-        for dr, dc in brush.cells:
+        # Se usa paint() solo para saber QUÉ celdas cubre el pincel (su forma,
+        # incluso si es dinámica en un SmartBrush) — el contenido de erase()
+        # siempre es blanco, se ignora lo que el pincel proponga pintar ahí.
+        ctx = BrushContext(frame, col, row, self.app.fg_char, self.app.fg_color, self.app.bg_color)
+        try:
+            cells = brush.paint(ctx)
+        except Exception as exc:
+            _log.warning(f"pincel '{brush.name}' falló en paint(): {exc}")
+            cells = []
+        for dr, dc, _ch, _fg, _bg in cells:
             r, c = row + dr, col + dc
             if 0 <= c < frame.width and 0 <= r < frame.height:
-                frame.content[r][c]     = ch
-                frame.newColorMap[r][c] = [fg, bg]
-                self.app.canvas_widget.update_cell(c, r, ch, fg, bg)
+                frame.content[r][c]     = " "
+                frame.newColorMap[r][c] = [7, 0]
+                self.app.canvas_widget.update_cell(c, r, " ", 7, 0)
         self._prev_cell = (col, row)
 
     def _push_undo(self):
