@@ -2,3 +2,9 @@ lib/
 __pycache__/
 *.pyc
 .venv/
+.venv311/
+dist/
+PrivDev/
+scripts/*.log
+logs/
+nuitka-crash-report.xml

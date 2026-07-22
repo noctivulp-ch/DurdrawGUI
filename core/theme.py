@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 import os
+from pathlib import Path
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 import core.log as log
+
+_QT6CT_CONF = Path.home() / ".config" / "qt6ct" / "qt6ct.conf"
 
 _log = log.get("theme")
 
@@ -563,12 +566,25 @@ class ThemeService:
         # Una vez que cambiamos a Fusion se pierde la paleta de qt6ct.
         self._sys_palette = app.palette() if app else None
         self._sys_tokens:  dict[str, str] | None = None
+        platform_theme = os.environ.get("QT_QPA_PLATFORMTHEME", "")
         _log.info(
             f"ThemeService init  tema={self._current}"
             f"  estilo_qt={self._orig_style}"
-            f"  QT_QPA_PLATFORMTHEME={os.environ.get('QT_QPA_PLATFORMTHEME', '<no definido>')}"
+            f"  QT_QPA_PLATFORMTHEME={platform_theme or '<no definido>'}"
             f"  QT_QPA_PLATFORM={os.environ.get('QT_QPA_PLATFORM', '<no definido>')}"
         )
+        if self._current == SYSTEM:
+            if not _QT6CT_CONF.exists():
+                _log.warning(
+                    f"Tema Qt personal no encontrado: {_QT6CT_CONF}"
+                    f" — usando Fusion como respaldo"
+                )
+            elif platform_theme != "qt6ct":
+                _log.warning(
+                    f"Configuración qt6ct encontrada en {_QT6CT_CONF}"
+                    f" pero QT_QPA_PLATFORMTHEME='{platform_theme}'"
+                    f" — el tema del sistema no se aplicará"
+                )
 
     @property
     def current(self) -> str:

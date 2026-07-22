@@ -4,7 +4,12 @@ import json
 import os
 from pathlib import Path
 
-_CFG_DIR  = Path(os.path.expanduser("~/.config/durdrawgui"))
+def _resolve_config_dir() -> Path:
+    if override := os.environ.get("DURDRAW_CONFIG_DIR"):
+        return Path(override)
+    return Path.home() / ".config" / "durdrawgui"
+
+_CFG_DIR  = _resolve_config_dir()
 _CFG_FILE = _CFG_DIR / "prefs.json"
 
 _DEFAULTS: dict[str, object] = {

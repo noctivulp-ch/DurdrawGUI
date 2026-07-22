@@ -38,7 +38,21 @@ from pathlib import Path
 
 # ── Directorios ───────────────────────────────────────────────────────────────
 _APP_DIR = Path(__file__).parent.parent
-_LOG_DIR = _APP_DIR / "logs"
+
+def _resolve_log_dir() -> Path:
+    # Override explícito (CLI --log-dir, propagado como env antes de este import)
+    if override := os.environ.get("DURDRAW_LOG_DIR"):
+        return Path(override)
+    # Dentro de AppImage (APPIMAGE/APPDIR) o binario frozen (PyInstaller/Nuitka)
+    # el ejecutable vive en un squashfs de solo lectura — usar XDG.
+    frozen = (os.environ.get("APPIMAGE") or os.environ.get("APPDIR")
+              or getattr(sys, "frozen", False)
+              or globals().get("__compiled__"))
+    if frozen:
+        return Path.home() / ".config" / "durdrawgui" / "logs"
+    return _APP_DIR / "logs"
+
+_LOG_DIR = _resolve_log_dir()
 
 # ── Formatos ──────────────────────────────────────────────────────────────────
 _FMT_FILE = logging.Formatter(

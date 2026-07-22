@@ -1,0 +1,127 @@
+DurdrawGUI — Licencia de uso con fuente visible
+Copyright (c) 2026 NoctiVulp
+
+────────────────────────────────────────────────────────────────
+
+DEFINICIONES
+
+"Software" designa DurdrawGUI en su totalidad, incluyendo código
+fuente, assets y documentación, con excepción de los Componentes
+de Terceros definidos al final de este documento.
+
+"Uso" designa ejecutar el Software en un entorno propio sin
+distribuirlo a terceros.
+
+"Modificación sustancial" designa cambios que introduzcan nuevas
+funcionalidades, corrijan defectos de funcionamiento, o adapten
+el Software a un sistema operativo o plataforma distinta de la
+original. Los cambios estéticos menores, de traducción o de
+configuración no constituyen modificación sustancial.
+
+"Build" designa cualquier forma compilada, empaquetada o
+ejecutable del Software, incluyendo AppImages, binarios nativos,
+paquetes de sistema y archivos ZIP que contengan el ejecutable.
+
+────────────────────────────────────────────────────────────────
+
+1. USO PERMITIDO
+
+Se concede permiso gratuito para usar el Software con cualquier
+fin, personal o comercial, sin restricción de número de usuarios
+o instalaciones, siempre que no se distribuya el Software ni
+ninguna Build a terceros.
+
+────────────────────────────────────────────────────────────────
+
+2. MODIFICACIÓN PARA USO PROPIO
+
+Se permite modificar el código fuente del Software para uso
+propio. Las modificaciones deben incluir, en un lugar visible del
+código modificado, la atribución al autor original:
+
+    Basado en DurdrawGUI — Copyright (c) 2026 NoctiVulp
+
+────────────────────────────────────────────────────────────────
+
+3. REDISTRIBUCIÓN DE CÓDIGO FUENTE MODIFICADO
+
+La redistribución pública del código fuente del Software en forma
+modificada está permitida únicamente si se cumplen todas las
+condiciones siguientes:
+
+  a) La modificación es sustancial en los términos de la sección
+     de Definiciones.
+
+  b) Se incluye la atribución al autor original de forma explícita
+     y visible:
+
+         Basado en DurdrawGUI — Copyright (c) 2026 NoctiVulp
+
+  c) El repositorio o distribución no usa el nombre "DurdrawGUI"
+     ni ningún nombre confusamente similar como denominación
+     principal del proyecto. El nombre queda reservado para
+     distribuciones oficiales del autor.
+
+  d) No se distribuye ninguna Build del Software modificado.
+     La prohibición de distribución de Builds del apartado 4
+     aplica también a versiones modificadas.
+
+  e) Los términos de esta licencia se mantienen sobre el código
+     derivado del Software original. El código genuinamente nuevo
+     añadido por el autor del fork puede licenciarse bajo los
+     términos que ese autor elija.
+
+────────────────────────────────────────────────────────────────
+
+4. PROHIBICIÓN DE DISTRIBUCIÓN DE BUILDS
+
+La distribución de Builds del Software está prohibida en cualquier
+forma, incluyendo:
+
+  · Builds generadas por el autor del Software y redistribuidas
+    por un tercero.
+  · Builds compiladas por terceros a partir del código fuente.
+  · Builds modificadas o derivadas.
+
+La única fuente autorizada de Builds es el canal oficial del autor:
+
+    https://www.patreon.com/cw/NoctiVulp
+
+────────────────────────────────────────────────────────────────
+
+5. SIN GARANTÍAS
+
+El Software se proporciona "tal cual", sin garantías de ningún
+tipo. El autor no se hace responsable de daños derivados del uso
+del Software.
+
+────────────────────────────────────────────────────────────────
+
+COMPONENTES DE TERCEROS
+
+El directorio core/durdraw/ contiene código de durdraw
+(https://github.com/cmang/durdraw), obra de Sam Foster,
+licenciado bajo BSD 3-Clause. Sus términos originales se aplican
+a ese código de forma independiente y prevalecen sobre esta
+licencia en lo que a ese código respecta.
+
+    BSD 3-Clause License — Copyright (c) Sam Foster
+    Redistribution and use in source and binary forms, with or
+    without modification, are permitted provided that the following
+    conditions are met:
+    1. Redistributions of source code must retain the above
+       copyright notice, this list of conditions and the following
+       disclaimer.
+    2. Redistributions in binary form must reproduce the above
+       copyright notice, this list of conditions and the following
+       disclaimer in the documentation and/or other materials
+       provided with the distribution.
+    3. Neither the name of the copyright holder nor the names of
+       its contributors may be used to endorse or promote products
+       derived from this software without specific prior written
+       permission.
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+    CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+    INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED.
