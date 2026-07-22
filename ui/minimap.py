@@ -136,17 +136,33 @@ class MinimapOverlay:
         cells_per_px_x = doc.width  / img_w
         cells_per_px_y = doc.height / img_h   # < cells_per_px_x por el ratio 1:2
 
+        # Composición una sola vez (O(w·h)) en lugar de composite_cell por píxel
+        # (O(w'·h'·capas)) — sobre 240×67 baja el rebuild de ~40 ms a pocos ms.
+        comp    = doc.composite_frame()
+        content = comp.content
+        cmap    = comp.newColorMap
+
+        # Paleta pre-resuelta a int RGB: setPixel(int) evita construir un QColor
+        # por píxel (el otro cuello de botella del bucle en Python).
+        n_pal = svc.count() if svc is not None else 16
+        pal   = [_qcolor(i, svc).rgb() for i in range(n_pal)]
+
+        def rgb(idx):
+            return pal[idx % n_pal]
+
         image = QImage(img_w, img_h, QImage.Format.Format_RGB32)
 
         for py in range(img_h):
             row = min(int(py * cells_per_px_y), doc.height - 1)
+            crow = content[row]
+            mrow = cmap[row]
             for px in range(img_w):
                 col = min(int(px * cells_per_px_x), doc.width - 1)
-                ch, fg_idx, bg_idx = doc.composite_cell(col, row)
+                ch  = crow[col]
+                fg_idx, bg_idx = mrow[col]
                 if ch and ch not in _EMPTY_CHARS:
-                    color = _qcolor(fg_idx, svc)
+                    image.setPixel(px, py, rgb(fg_idx))
                 else:
-                    color = _qcolor(bg_idx, svc)
-                image.setPixelColor(px, py, color)
+                    image.setPixel(px, py, rgb(bg_idx))
 
         return image

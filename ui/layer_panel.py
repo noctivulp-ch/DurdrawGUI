@@ -18,6 +18,7 @@ class LayerPanel(QWidget):
 
         self._list = QListWidget()
         self._list.currentRowChanged.connect(self._on_row_changed)
+        self._list.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self._list)
 
         btn_row = QHBoxLayout()
@@ -61,4 +62,16 @@ class LayerPanel(QWidget):
         real_idx = len(doc.layers) - 1 - row
         if real_idx != doc.active_layer_idx:
             doc.set_active_layer(real_idx)
+            self.app.canvas_widget.render_frame()
+
+    def _on_item_changed(self, item: QListWidgetItem):
+        doc = self.app.doc
+        real_idx = len(doc.layers) - 1 - self._list.row(item)
+        if not (0 <= real_idx < len(doc.layers)):
+            return
+        visible = item.checkState() == Qt.CheckState.Checked
+        layer = doc.layers[real_idx]
+        if layer.visible != visible:
+            layer.visible = visible
+            self.app.canvas_widget.invalidate_all_frames()
             self.app.canvas_widget.render_frame()
