@@ -15,6 +15,11 @@ PALETTE_256 = _build_palette_256()
 ANSI_COLORS = PALETTE_256[:16]
 
 
+def palette_cols(mode: str) -> int:
+    """Columnas de la grilla de paleta para el modo dado (coincide con ColorPanel)."""
+    return 2 if mode == "16" else 16
+
+
 class ColorService:
     """Proveedor centralizado de paleta. Un solo punto para cambiar o extender colores."""
 

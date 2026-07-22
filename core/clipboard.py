@@ -57,10 +57,14 @@ class ClipboardManager:
 
     # ── Pegar ─────────────────────────────────────────────────────────────────
 
-    def paste(self):
+    def paste(self) -> bool:
+        """Pega el portapapeles. Devuelve False si se bloqueó por incompatibilidad
+        de paleta (portapapeles con colores >15 sobre un lienzo en modo 16 colores)."""
         if not self.clipboard:
-            return
-        doc    = self._app.doc
+            return True
+        doc = self._app.doc
+        if doc.color_format == "16" and self._clipboard_has_extended_colors():
+            return False
         canvas = self._app.canvas_widget
         frame  = doc.current_frame()
         col0, row0 = (self.sel_rect[0], self.sel_rect[1]) if self.sel_rect else (0, 0)
@@ -96,6 +100,11 @@ class ClipboardManager:
             canvas.render_frame()
 
         self._app.history.push(undo, redo)
+        return True
+
+    def _clipboard_has_extended_colors(self) -> bool:
+        return any(fg > 15 or bg > 15
+                   for row in self.clipboard for _ch, fg, bg in row)
 
     # ── Borrar selección ──────────────────────────────────────────────────────
 

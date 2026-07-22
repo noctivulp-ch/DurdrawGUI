@@ -3,7 +3,7 @@ import os
 from PySide6.QtWidgets import (QMainWindow, QWidget, QSplitter,
                                QVBoxLayout, QMessageBox, QFileDialog)
 from PySide6.QtCore    import Qt, QTimer
-from PySide6.QtGui     import QKeySequence, QShortcut, QCloseEvent, QAction
+from PySide6.QtGui     import QKeySequence, QCloseEvent, QAction
 
 from core.document      import Document
 from core.clipboard     import ClipboardManager
@@ -38,14 +38,29 @@ from ui.dialogs     import NewCanvasDialog
 from ui.minimap     import MinimapOverlay
 from ui.preferences import PreferencesDialog
 from ui.char_panel  import CharPanel
+from ui.about       import AboutDialog
 
 DEFAULT_W = 80
 DEFAULT_H = 24
 
 
 class App(QMainWindow):
-    def __init__(self):
+    # Acciones "de tecla suelta" que deben ceder ante el modo de dibujo por
+    # teclado (namespace compartido — ver core/shortcuts.py). zoom_reset y
+    # deselect combinan una tecla con modificador (permanece activa) con una
+    # suelta: se manejan aparte en set_kb_draw_mode() en vez de deshabilitarse
+    # por completo.
+    _KB_MODE_GATED_ACTIONS = [
+        "tool_pencil", "tool_eraser", "tool_eyedropper", "tool_fill",
+        "tool_selection", "tool_line", "tool_rect", "tool_ellipse",
+        "swap_colors", "minimap_toggle", "clear_selection",
+        "frame_prev", "frame_next", "frame_first", "frame_last", "play_toggle",
+    ]
+
+
+    def __init__(self, open_file: str | None = None):
         super().__init__()
+        self._open_file_at_start = open_file
         log.info("App Qt __init__ inicio")
         self.setWindowTitle("DurdrawGUI")
         self.resize(1200, 700)
@@ -58,8 +73,8 @@ class App(QMainWindow):
         self.bus          = EventBus()
         self.theme_service = ThemeService(self.config, self.bus)
         self.theme_service.apply_current()
-        self._actions:       dict[str, QAction]   = {}
-        self._shortcut_objs: dict[str, QShortcut] = {}
+        self._actions: dict[str, QAction] = {}
+        self._kb_draw_mode = False   # modo cursor de teclado (estado en canvas.py: _kb_cursor/_kb_target)
 
         # ── Servicios y modelo ─────────────────────────────────────────────
         self.color_service = ColorService(self.bus)
@@ -136,9 +151,9 @@ class App(QMainWindow):
         self.canvas_widget.minimap = self.minimap
 
         # ── Fuente del canvas (desde configuración) ───────────────────────
-        self.canvas_widget.set_font_family(
-            self.config.get("canvas_font", "DejaVu Sans Mono")
-        )
+        font_family = self.config.get("canvas_font", "DejaVu Sans Mono")
+        self.canvas_widget.set_font_family(font_family)
+        doc_io.set_export_font_family(font_family)
 
         # ── Atajos ────────────────────────────────────────────────────────
         self._bind_shortcuts()
@@ -151,30 +166,38 @@ class App(QMainWindow):
         self._refresh_timeline()
         log.info("App Qt inicializada")
 
+        if self._open_file_at_start:
+            QTimer.singleShot(0, lambda: self._load_file(self._open_file_at_start))
+
     # ── Menú ──────────────────────────────────────────────────────────────
 
+    def _seqs(self, action_id: str) -> list[QKeySequence]:
+        """Las 1-2 combinaciones asignadas a una acción, listas para QAction.setShortcuts."""
+        return [QKeySequence(k) for k in self.shortcut_mgr.keys(action_id) if k]
+
     def _build_menu(self):
-        sm   = self.shortcut_mgr
         acts = self._actions
         mb   = self.menuBar()
 
         def add(menu, label, action_id, fn):
-            a = menu.addAction(label, fn, QKeySequence(sm.key(action_id)))
+            a = menu.addAction(label, fn)
+            a.setShortcuts(self._seqs(action_id))
             acts[action_id] = a
             return a
 
         fm = mb.addMenu("Archivo")
-        add(fm, "Nuevo lienzo…", "file_new",  self.new_file)
-        add(fm, "Abrir…",        "file_open", self.open_file)
-        add(fm, "Guardar…",      "file_save", self.save)
+        add(fm, "Nuevo lienzo…", "file_new",     self.new_file)
+        add(fm, "Abrir…",        "file_open",    self.open_file)
+        add(fm, "Guardar",       "file_save",    self.save)
+        add(fm, "Guardar como…", "file_save_as", self.save_as)
         fm.addSeparator()
         exp = fm.addMenu("Exportar")
-        exp.addAction("ANSI…",        self.export_ansi)
-        exp.addAction("PNG…",         self.export_png)
-        exp.addAction("JPEG…",        self.export_jpeg)
+        add(exp, "ANSI…",        "export_ansi", self.export_ansi)
+        add(exp, "PNG…",         "export_png",  self.export_png)
+        add(exp, "JPEG…",        "export_jpeg", self.export_jpeg)
         exp.addSeparator()
-        exp.addAction("GIF animado…", self.export_gif)
-        exp.addAction("MP4…",         self.export_mp4)
+        add(exp, "GIF animado…", "export_gif",  self.export_gif)
+        add(exp, "MP4…",         "export_mp4",  self.export_mp4)
         fm.addSeparator()
         add(fm, "Salir", "file_quit", self.close)
 
@@ -189,7 +212,7 @@ class App(QMainWindow):
         add(em, "Seleccionar todo", "select_all",  self.select_all)
         add(em, "Deseleccionar",    "deselect",    self.deselect)
         em.addSeparator()
-        em.addAction("Preferencias…", self.open_preferences)
+        add(em, "Preferencias…", "preferences", self.open_preferences)
 
         frm = mb.addMenu("Frame")
         add(frm, "Nuevo frame",    "frame_new",       self.add_frame)
@@ -200,11 +223,11 @@ class App(QMainWindow):
         add(frm, "Siguiente", "frame_next", self.next_frame)
 
         lm = mb.addMenu("Capas")
-        lm.addAction("Nueva capa",    self.add_layer)
-        lm.addAction("Eliminar capa", self.delete_layer)
+        add(lm, "Nueva capa",    "layer_new",       self.add_layer)
+        add(lm, "Eliminar capa", "layer_delete",    self.delete_layer)
         lm.addSeparator()
-        lm.addAction("Subir capa",    self.move_layer_up)
-        lm.addAction("Bajar capa",    self.move_layer_down)
+        add(lm, "Subir capa", "layer_move_up",   self.move_layer_up)
+        add(lm, "Bajar capa", "layer_move_down", self.move_layer_down)
 
         vm = mb.addMenu("Vista")
         add(vm, "Acercar",  "zoom_in",    self.zoom_in)
@@ -213,23 +236,34 @@ class App(QMainWindow):
 
         self._grid_act = vm.addAction("Mostrar rejilla")
         self._grid_act.setCheckable(True)
+        self._grid_act.setShortcuts(self._seqs("toggle_grid"))
         self._grid_act.triggered.connect(self._toggle_grid)
+        acts["toggle_grid"] = self._grid_act
 
         vm.addSeparator()
         self._c256_act = vm.addAction("Modo 256 colores")
         self._c256_act.setCheckable(True)
+        self._c256_act.setShortcuts(self._seqs("toggle_color_mode"))
         self._c256_act.triggered.connect(self._toggle_color_mode)
+        acts["toggle_color_mode"] = self._c256_act
 
-    # ── Atajos adicionales (teclas sueltas que el menú no puede registrar) ─
+        hm = mb.addMenu("Ayuda")
+        hm.addAction("Acerca de…", self._show_about)
+
+    def _show_about(self):
+        AboutDialog(self).exec()
+
+    # ── Atajos adicionales (herramientas y navegación, sin entrada de menú) ─
 
     def _bind_shortcuts(self):
-        sm   = self.shortcut_mgr
-        objs = self._shortcut_objs
+        acts = self._actions
 
         def sc(action_id, fn):
-            s = QShortcut(QKeySequence(sm.key(action_id)), self)
-            s.activated.connect(fn)
-            objs[action_id] = s
+            a = QAction(self)
+            a.setShortcuts(self._seqs(action_id))
+            a.triggered.connect(fn)
+            self.addAction(a)
+            acts[action_id] = a
 
         sc("tool_pencil",     lambda: self.select_tool("pencil"))
         sc("tool_eraser",     lambda: self.select_tool("eraser"))
@@ -240,9 +274,6 @@ class App(QMainWindow):
         sc("tool_rect",       lambda: self.select_tool("rect"))
         sc("tool_ellipse",    lambda: self.select_tool("ellipse"))
         sc("swap_colors",     self.swap_colors)
-        sc("zoom_reset_1",    self.zoom_reset)
-        sc("redo_alt",        self.redo)
-        sc("deselect_esc",    self.deselect)
         sc("clear_selection", self.clear_selection)
         sc("frame_first",     self.goto_first_frame)
         sc("frame_last",      self.goto_last_frame)
@@ -251,12 +282,32 @@ class App(QMainWindow):
         sc("minimap_toggle",  self._toggle_minimap)
 
     def _rebuild_shortcuts(self):
-        """Actualiza teclas tras cambios en Preferencias (sin recrear objetos)."""
-        sm = self.shortcut_mgr
+        """Actualiza las combinaciones tras cambios en Preferencias (sin recrear objetos)."""
         for action_id, action in self._actions.items():
-            action.setShortcut(QKeySequence(sm.key(action_id)))
-        for action_id, shortcut in self._shortcut_objs.items():
-            shortcut.setKey(QKeySequence(sm.key(action_id)))
+            action.setShortcuts(self._seqs(action_id))
+
+    def set_kb_draw_mode(self, active: bool):
+        """Activa/desactiva el modo cursor de teclado. Lo llama AsciiCanvas al
+        detectar kb_draw_toggle/Escape. Mientras está activo, las acciones de
+        tecla suelta (herramientas, navegación de frames…) se deshabilitan
+        para que el canvas pueda interpretar esas mismas teclas como
+        movimiento/dibujo — ver _KB_MODE_GATED_ACTIONS."""
+        if active == self._kb_draw_mode:
+            return
+        log.info(f"kb_draw_mode → {'ON' if active else 'OFF'}")
+        self._kb_draw_mode = active
+        for action_id in self._KB_MODE_GATED_ACTIONS:
+            self._actions[action_id].setEnabled(not active)
+        if active:
+            self._actions["zoom_reset"].setShortcuts(
+                [QKeySequence(self.shortcut_mgr.key("zoom_reset", 0))])
+            self._actions["deselect"].setShortcuts(
+                [QKeySequence(self.shortcut_mgr.key("deselect", 0))])
+            self.statusbar.showMessage("Modo cursor de teclado activado (Esc para salir)", 3000)
+        else:
+            self._rebuild_shortcuts()
+            self.statusbar.showMessage("Modo cursor de teclado desactivado", 2000)
+        self.canvas_widget.update()
 
     # ── Preferencias ──────────────────────────────────────────────────────
 
@@ -266,9 +317,9 @@ class App(QMainWindow):
             self.config.save()
             self._rebuild_shortcuts()
             self.theme_service.apply(self.config.get("theme", "dark"))
-            self.canvas_widget.set_font_family(
-                self.config.get("canvas_font", "DejaVu Sans Mono")
-            )
+            font_family = self.config.get("canvas_font", "DejaVu Sans Mono")
+            self.canvas_widget.set_font_family(font_family)
+            doc_io.set_export_font_family(font_family)
 
         dlg = PreferencesDialog(self, self.shortcut_mgr, self.config,
                                 on_accept=on_accept)
@@ -384,8 +435,19 @@ class App(QMainWindow):
 
     # ── Historial ─────────────────────────────────────────────────────────
 
-    def undo(self): self.history.undo()
-    def redo(self): self.history.redo()
+    # undo/redo restauran datos en el objeto frame capturado al crear el comando.
+    # Si el usuario navegó a otro frame antes de deshacer, el caché compuesto del
+    # frame editado quedaría obsoleto (la navegación lo dejó guardado): invalidamos
+    # todos los frames para forzar recomposición al revisitarlos.
+    def undo(self):
+        self.history.undo()
+        self.canvas_widget.invalidate_all_frames()
+        self.canvas_widget.render_frame()
+
+    def redo(self):
+        self.history.redo()
+        self.canvas_widget.invalidate_all_frames()
+        self.canvas_widget.render_frame()
 
     # ── Zoom ──────────────────────────────────────────────────────────────
 
@@ -401,9 +463,45 @@ class App(QMainWindow):
 
     def _toggle_color_mode(self):
         mode = "256" if self._c256_act.isChecked() else "16"
+        self._set_color_mode(mode)
+
+    def _set_color_mode(self, mode: str, *, reset_colors: bool = False) -> bool:
+        """Sincroniza doc.color_format + ColorService + checkbox + UI.
+
+        Subir a 256 siempre es seguro (los índices 0-15 son idénticos en ambas
+        paletas). Bajar a 16 es destructivo si el documento o los colores
+        fg/bg activos usan la paleta extendida (>15) — el índice se
+        reinterpretaría en una paleta de solo 16 entradas al pintar/exportar,
+        y `ColorPanel` puede reventar con IndexError. Se bloquea ese caso.
+
+        reset_colors=True omite el chequeo reseteando fg/bg a valores válidos
+        en cualquier paleta (15/0) — usado al crear o abrir un documento,
+        donde no hay nada previo que preservar.
+        """
+        if reset_colors:
+            self.fg_color, self.bg_color = 15, 0
+        elif mode == "16":
+            unsafe = (self.doc.color_format == "256" and self.doc.has_extended_colors()) \
+                     or self.fg_color > 15 or self.bg_color > 15
+            if unsafe:
+                QMessageBox.warning(
+                    self, "No se puede bajar a 16 colores",
+                    "El lienzo tiene celdas pintadas o colores activos fuera "
+                    "del rango de 16 colores (paleta extendida de 256).\n"
+                    "Reduce esos colores manualmente antes de cambiar de modo."
+                )
+                self._c256_act.setChecked(True)
+                return False
+
+        self.doc.color_format = mode
         self.color_service.set_mode(mode)
+        self._c256_act.setChecked(mode == "256")
         self.color_panel.rebuild_palette()
         self._refresh_color_panel()
+        self.canvas_widget.invalidate_all_frames()
+        self.canvas_widget.render_frame()
+        self.minimap.invalidate()
+        return True
 
     # ── Selección ──────────────────────────────────────────────────────────
 
@@ -414,7 +512,14 @@ class App(QMainWindow):
     def deselect(self):       self.clipboard_mgr.deselect()
     def copy_selection(self): self.clipboard_mgr.copy()
     def cut_selection(self):  self.clipboard_mgr.cut()
-    def paste_clipboard(self):self.clipboard_mgr.paste()
+    def paste_clipboard(self):
+        if not self.clipboard_mgr.paste():
+            QMessageBox.warning(
+                self, "No se puede pegar",
+                "Lo copiado usa colores de la paleta extendida (256) y el "
+                "lienzo actual está en modo 16 colores.\n"
+                "Cambia el lienzo a 256 colores para pegarlo sin pérdida."
+            )
     def clear_selection(self):self.clipboard_mgr.erase()
 
     # ── Navegación de frames ───────────────────────────────────────────────
@@ -495,19 +600,16 @@ class App(QMainWindow):
         d = dlg.result_data
         w, h, mode = d["width"], d["height"], d["color_mode"]
         log.info(f"new_file creando {w}×{h} modo={mode}")
-        self.color_service.set_mode(mode)
-        self._c256_act.setChecked(mode == "256")
         self.timeline.stop_play()
-        self.doc          = Document(w, h)
+        self.doc          = Document(w, h, color_format=mode)
         self.history      = self._new_history()
         self._saved_path  = None
         self._dirty       = False
         self.clipboard_mgr.reset()
-        self.color_panel.rebuild_palette()
+        self._set_color_mode(mode, reset_colors=True)
         self.bus.emit("layers_changed", None)
         self.canvas_widget.render_frame()
         self._refresh_timeline()
-        self._refresh_color_panel()
         self.setWindowTitle("DurdrawGUI — Sin título")
         self.canvas_widget.center_view()
         log.info(f"new_file listo {w}×{h}")
@@ -519,11 +621,13 @@ class App(QMainWindow):
             self, "Abrir", "",
             "Archivos DurdrawGUI (*.durg *.dur);;Todos (*.*)"
         )
-        if not path:
-            return
+        if path:
+            self._load_file(path)
+
+    def _load_file(self, path: str):
         try:
             self.doc         = doc_io.load(path)
-            self.color_service.set_mode(self.doc.color_format)
+            self._set_color_mode(self.doc.color_format, reset_colors=True)
             self.history     = self._new_history()
             self._saved_path = path
             self._dirty      = False
@@ -538,12 +642,22 @@ class App(QMainWindow):
             QMessageBox.critical(self, "Error al abrir", str(exc))
 
     def save(self):
+        """Guardado rápido: reutiliza la ruta actual; si el lienzo es nuevo, pide una (= Guardar como)."""
+        if self._saved_path:
+            self._save_to(self._saved_path)
+        else:
+            self.save_as()
+
+    def save_as(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, "Guardar", os.path.basename(self._saved_path or ""),
+            self, "Guardar como", os.path.basename(self._saved_path or ""),
             "DurdrawGUI (*.durg);;durdraw (*.dur);;Todos (*.*)"
         )
         if not path:
             return
+        self._save_to(path)
+
+    def _save_to(self, path):
         try:
             doc_io.save(self.doc, path)
             self._saved_path = path

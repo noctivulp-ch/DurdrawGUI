@@ -152,6 +152,17 @@ class Document:
 
         return _CompositeFrame(content, colormap, self.width, self.height)
 
+    def has_extended_colors(self) -> bool:
+        """True si alguna celda, de cualquier capa/frame, usa fg/bg fuera de 0-15
+        (paleta extendida de 256). Usado para bloquear la conversión a 16 colores."""
+        for layer in self._layers:
+            for frame in layer.frames:
+                for row in frame.newColorMap:
+                    for fg, bg in row:
+                        if fg > 15 or bg > 15:
+                            return True
+        return False
+
     def composite_cell(self, col, row):
         """(ch, fg, bg) compuesto en la celda dada para el frame actual."""
         ch, fg, bg = " ", 7, 0

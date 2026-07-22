@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QSize, Signal
 
 # ── Grupos de caracteres ──────────────────────────────────────────────────────
 
-_GROUPS: dict[str, list[str]] = {
+GROUPS: dict[str, list[str]] = {
     "ASCII": [chr(i) for i in range(32, 127)],
 
     "Cajas": list(
@@ -111,6 +111,10 @@ class _FlowTabBar(QWidget):
         if self._btns:
             self._btns[0].setChecked(True)
 
+    def set_checked(self, idx: int):
+        if 0 <= idx < len(self._btns):
+            self._btns[idx].setChecked(True)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._relayout(event.size().width())
@@ -150,6 +154,8 @@ class _CharGrid(QWidget):
         self._cols         = 0
         self._needs_layout = True
         self._buttons: list[QToolButton] = []
+        self._marked_char: str | None = None
+        self._marked_row:  int | None = None
 
         font = QFont("Monospace", 12)
         font.setFixedPitch(True)
@@ -217,6 +223,27 @@ class _CharGrid(QWidget):
             "char": ch,
         })
 
+    # ── Overlays de resaltado (carácter activo / fila de navegación) ───────
+
+    def mark_active_char(self, ch: str | None):
+        self._marked_char = ch
+        self._restyle_buttons()
+
+    def mark_row(self, row: int | None):
+        self._marked_row = row
+        self._restyle_buttons()
+
+    def _restyle_buttons(self):
+        for idx, btn in enumerate(self._buttons):
+            is_active = self._chars[idx] == self._marked_char
+            in_row    = self._marked_row is not None and idx // 10 == self._marked_row
+            if is_active:
+                btn.setStyleSheet("QToolButton{border:2px solid #ffffff; background-color:#3a3a3a;}")
+            elif in_row:
+                btn.setStyleSheet("QToolButton{border:1px solid #55aaff; background-color:#2a2a3a;}")
+            else:
+                btn.setStyleSheet("")
+
 
 # ── Panel principal ───────────────────────────────────────────────────────────
 
@@ -225,6 +252,7 @@ class CharPanel(QWidget):
 
     def __init__(self, parent, app, **kwargs):
         super().__init__(parent)
+        self._app = app
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 2, 0, 0)
         layout.setSpacing(0)
@@ -234,13 +262,15 @@ class CharPanel(QWidget):
         lbl.setStyleSheet("font-size:10px; color:#888; padding:0 4px;")
         layout.addWidget(lbl)
 
-        labels = list(_GROUPS.keys())
+        labels = list(GROUPS.keys())
         self._tab_bar = _FlowTabBar(labels)
         layout.addWidget(self._tab_bar)
 
         self._stack = QStackedWidget()
-        for chars in _GROUPS.values():
+        self._grids: list[_CharGrid] = []
+        for chars in GROUPS.values():
             grid_widget = _CharGrid(chars, app)
+            self._grids.append(grid_widget)
             scroll = QScrollArea()
             scroll.setWidget(grid_widget)
             scroll.setWidgetResizable(True)
@@ -251,3 +281,40 @@ class CharPanel(QWidget):
 
         self._tab_bar.tab_changed.connect(self._stack.setCurrentIndex)
         layout.addWidget(self._stack, stretch=1)
+
+        app.bus.on("color_changed", self._on_color_changed)
+
+    def _on_color_changed(self, data: dict):
+        ch = data.get("char")
+        for grid in self._grids:
+            grid.mark_active_char(ch)
+
+    # ── API de navegación por teclado (AsciiCanvas en modo cursor) ─────────
+
+    def group_names(self) -> list[str]:
+        return list(GROUPS.keys())
+
+    def current_group_index(self) -> int:
+        return self._stack.currentIndex()
+
+    def group_chars(self, idx: int) -> list[str]:
+        return list(GROUPS.values())[idx]
+
+    def select_group(self, idx: int):
+        self._tab_bar.set_checked(idx)
+
+    def set_kb_row_indicator(self, row: int | None):
+        """Resalta la fila de 10 activa en el grupo visible; None la limpia."""
+        active = self.current_group_index()
+        for i, grid in enumerate(self._grids):
+            grid.mark_row(row if i == active else None)
+
+    def pick_slot(self, row: int, slot: int) -> bool:
+        """Selecciona el carácter en la fila/posición (0-9) dadas del grupo
+        activo. Devuelve False si esa posición no existe (fila corta)."""
+        chars = self.group_chars(self.current_group_index())
+        idx = row * 10 + slot
+        if not (0 <= idx < len(chars)):
+            return False
+        self._grids[self.current_group_index()]._pick(chars[idx])
+        return True

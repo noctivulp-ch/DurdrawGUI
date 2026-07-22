@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
 from PySide6.QtGui     import QColor, QPainter, QPen
 from PySide6.QtCore    import Qt, QSize
 
-from core.color_service import ANSI_COLORS, PALETTE_256
+from core.color_service import ANSI_COLORS, PALETTE_256, palette_cols
 
 
 class _ColorSwatch(QPushButton):
@@ -18,16 +18,19 @@ class _ColorSwatch(QPushButton):
             f"background-color:{hex_color}; border:1px solid #444; padding:0;"
         )
 
-    def mark_fg(self, yes: bool):
-        border = "#ffffff" if yes else "#444444"
+    def set_marks(self, is_fg: bool, is_bg: bool):
+        """Resalta si este swatch es el color de frente/fondo activo (overlay
+        de selección — ambos a la vez usan un color distintivo propio)."""
+        if is_fg and is_bg:
+            border, width = "#ff00ff", 2
+        elif is_fg:
+            border, width = "#ffffff", 2
+        elif is_bg:
+            border, width = "#ffff00", 2
+        else:
+            border, width = "#444444", 1
         self.setStyleSheet(
-            f"background-color:{self._hex}; border:2px solid {border}; padding:0;"
-        )
-
-    def mark_bg(self, yes: bool):
-        border = "#ffff00" if yes else "#444444"
-        self.setStyleSheet(
-            f"background-color:{self._hex}; border:2px solid {border}; padding:0;"
+            f"background-color:{self._hex}; border:{width}px solid {border}; padding:0;"
         )
 
 
@@ -88,7 +91,7 @@ class ColorPanel(QWidget):
 
         mode   = self.app.color_service.mode
         colors = ANSI_COLORS if mode == "16" else PALETTE_256
-        cols   = 2 if mode == "16" else 16
+        cols   = palette_cols(mode)
 
         grid = QGridLayout()
         grid.setSpacing(1)
@@ -107,6 +110,12 @@ class ColorPanel(QWidget):
             self._swatches.append(sw)
 
         self._mode = mode
+        self._update_marks(self.app.fg_color, self.app.bg_color)
+
+    def _update_marks(self, fg: int, bg: int):
+        """Overlay de resaltado: marca en la grilla qué swatch(es) son el fg/bg activos."""
+        for sw in self._swatches:
+            sw.set_marks(sw._idx == fg, sw._idx == bg)
 
     def _on_color_changed(self, data: dict):
         fg   = data.get("fg", 15)
@@ -121,6 +130,7 @@ class ColorPanel(QWidget):
         self._bg_swatch.setStyleSheet(
             f"background-color:{colors[bg]}; border:2px solid #ffff00; padding:0;"
         )
+        self._update_marks(fg, bg)
         if self._char_edit.text() != ch:
             self._char_edit.blockSignals(True)
             self._char_edit.setText(ch)
