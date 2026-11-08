@@ -281,10 +281,25 @@ class App(QMainWindow):
         sc("center_view",     self.center_view)
         sc("minimap_toggle",  self._toggle_minimap)
 
+        # kb_draw_toggle es especial: su primario (Ctrl+Tab, con modificador)
+        # va como QAction de ventana normal — funciona sin importar qué
+        # widget tenga el foco. Su secundario (Tab, tecla suelta) NO se
+        # registra acá: Qt lo usaría para navegación de foco antes de que
+        # llegue a un QAction; sigue andando vía AsciiCanvas.event()/
+        # KeyboardInput cuando el canvas ya tiene el foco (ver canvas.py).
+        kb_toggle = QAction(self)
+        kb_toggle.setShortcut(QKeySequence(self.shortcut_mgr.key("kb_draw_toggle", 0)))
+        kb_toggle.triggered.connect(self.canvas_widget.keyboard_input.toggle_draw_mode)
+        self.addAction(kb_toggle)
+        acts["kb_draw_toggle"] = kb_toggle
+
     def _rebuild_shortcuts(self):
         """Actualiza las combinaciones tras cambios en Preferencias (sin recrear objetos)."""
         for action_id, action in self._actions.items():
-            action.setShortcuts(self._seqs(action_id))
+            if action_id == "kb_draw_toggle":
+                action.setShortcut(QKeySequence(self.shortcut_mgr.key("kb_draw_toggle", 0)))
+            else:
+                action.setShortcuts(self._seqs(action_id))
 
     def set_kb_draw_mode(self, active: bool):
         """Activa/desactiva el modo cursor de teclado. Lo llama AsciiCanvas al

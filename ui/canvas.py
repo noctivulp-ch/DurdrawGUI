@@ -26,14 +26,17 @@ from __future__ import annotations
 import math
 
 from PySide6.QtWidgets import QWidget, QSizePolicy
-from PySide6.QtCore    import Qt, QRect, QRectF, QPoint, QTimer, QKeyCombination, QEvent
+from PySide6.QtCore    import Qt, QRect, QRectF, QPoint, QTimer, QEvent
 from PySide6.QtGui     import (
     QPainter, QPen, QColor, QFont, QFontMetrics, QBrush, QImage,
-    QPaintEvent, QMouseEvent, QWheelEvent, QKeyEvent, QKeySequence,
+    QPaintEvent, QMouseEvent, QWheelEvent, QKeyEvent,
 )
 
 import core.log as log
 from ui.minimap import MinimapOverlay
+from ui.input.mouse    import MouseInput
+from ui.input.keyboard import KeyboardInput
+from ui.input.tablet   import TabletInput
 
 _log       = log.get("canvas")   # render_frame, zoom, scroll, overlays
 _log_paint = log.get("paint")    # por-paintEvent: dirty rect, celdas
@@ -55,11 +58,6 @@ _SVC_QCOLOR_CACHE: dict[str, QColor] = {}  # hex → QColor para modo 256
 # ── Niveles de zoom ────────────────────────────────────────────────────────────
 _ZOOM_STEPS    = [6, 8, 10, 12, 14, 16, 18, 20, 24]
 _BASE_FONT_IDX = _ZOOM_STEPS.index(14)
-
-# ── Estados de la herramienta ──────────────────────────────────────────────────
-_STANDBY   = "standby"
-_DRAWING   = "drawing"
-_SCROLLING = "scrolling"
 
 # ── Helpers para guías de cel (§7) ────────────────────────────────────────────
 
@@ -266,14 +264,11 @@ class AsciiCanvas(QWidget):
         self._needs_center = True   # centrar en el primer paintEvent real
         self._needs_dpr_init = True # recalcular cell_size con DPR real (post-show)
 
-        # ── Estado de la herramienta activa ────────────────────────────────
-        self._tool_state    = _STANDBY
-        self._scroll_origin: tuple[int, int] | None = None
-        self._scroll_view_orig: tuple[int, int] | None = None
-        self._space_held    = False
-        self._ctrl_held     = False
-        self._picker_held   = False   # tecla de "recoger color" (kb_pick_color) sostenida
-        self._saved_tool    = None
+        # ── Drivers de input (mouse/teclado/tableta — ver ui/input/) ────────
+        self.mouse_input    = MouseInput(self, app)
+        self.keyboard_input = KeyboardInput(self, app)
+        self.tablet_input   = TabletInput(self, app)
+        self._ctrl_held     = False   # leído por paintEvent/update_cursor (guías de cel)
 
         # ── Modo cursor de teclado (dibujo sin ratón) ───────────────────────
         self._kb_cursor: tuple[int, int] | None = None
@@ -1041,101 +1036,23 @@ class AsciiCanvas(QWidget):
     # ── Gestión de eventos Qt → lógica de herramientas ────────────────────
 
     def mousePressEvent(self, event: QMouseEvent):
-        if self._tool_state != _STANDBY:
-            return
-        x, y   = int(event.position().x()), int(event.position().y())
-        button = self._qt_button(event.button())
-        alt    = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
-
-        if self._space_held or button == 2:
-            self._tool_state       = _SCROLLING
-            self._scroll_origin    = (x, y)
-            self._scroll_view_orig = (int(self._view_col), int(self._view_row))
-            _log_input.debug(f"mouse_press  scroll_start  ({x},{y})")
-            return
-
-        # Clic derecho = borrar; alt o la tecla de "recoger color" (F por
-        # defecto, misma acción que en el modo cursor de teclado) = cuentagotas
-        # directo. Se sustituye temporalmente la herramienta activa — mouseReleaseEvent
-        # la restaura.
-        if button == 3:
-            self._saved_tool     = self.app.active_tool
-            self.app.active_tool = self.app._tools["eraser"]
-        elif alt or self._picker_held:
-            self._saved_tool     = self.app.active_tool
-            self.app.active_tool = self.app._tools["eyedropper"]
-
-        col, row = self.screen_to_cell(x, y)
-        _log_input.debug(f"mouse_press  btn={button}  ({x},{y}) → cell({col},{row})  tool={self.app.active_tool.name}")
-        self._tool_state = _DRAWING
-        self.app.active_tool.on_start(col, row, 1)
+        self.mouse_input.press(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        x, y = int(event.position().x()), int(event.position().y())
-        col, row = self.screen_to_cell(x, y)
-
-        if self._tool_state == _DRAWING:
-            self.update_cursor(col, row)
-            self.app.active_tool.on_drag(col, row)
-        elif self._tool_state == _SCROLLING:
-            ox, oy = self._scroll_origin
-            dx = (x - ox) // self._cell_w
-            dy = (y - oy) // self._cell_h
-            self.set_view(self._scroll_view_orig[0] - dx,
-                          self._scroll_view_orig[1] - dy)
-            return  # SizeAllCursor ya está activo; no sobreescribir
-        else:
-            self.update_cursor(col, row)
-
-        # Cursor del sistema: cruceta fuera del área del documento, invisible dentro
-        # (el canvas dibuja su propio indicador de celda sobre el documento)
-        if not self._space_held:
-            doc   = self.app.doc
-            shape = (Qt.CursorShape.BlankCursor
-                     if 0 <= col < doc.width and 0 <= row < doc.height
-                     else Qt.CursorShape.CrossCursor)
-            if self.cursor().shape() != shape:
-                self.setCursor(shape)
+        self.mouse_input.move(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if self._tool_state == _DRAWING:
-            x, y     = int(event.position().x()), int(event.position().y())
-            col, row = self.screen_to_cell(x, y)
-            _log_input.debug(f"mouse_release  btn={self._qt_button(event.button())}  cell({col},{row})")
-            self.app.active_tool.on_end(col, row, 1)
-            if self.minimap:
-                self.minimap.invalidate()
-                self.update()   # repintado completo: el dirty de on_end puede excluir el minimap
-            if self._saved_tool is not None:
-                self.app.active_tool = self._saved_tool
-                self._saved_tool     = None
-        self._tool_state = _STANDBY
+        self.mouse_input.release(event)
 
     def leaveEvent(self, event):
         self.clear_cursor_highlight()
         self.setCursor(Qt.CursorShape.BlankCursor)
 
     def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
-            self.app.swap_colors()
-            return
-        ctrl  = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        dy = event.angleDelta().y()
-        dx = event.angleDelta().x()   # rueda horizontal nativa (trackpad) o gesto lateral
-        x, y = int(event.position().x()), int(event.position().y())
-        if ctrl:
-            if dy > 0:
-                self.app.zoom_in(x, y)
-            else:
-                self.app.zoom_out(x, y)
-        elif shift or dx:
-            delta  = dx if dx else dy
-            scroll = -3 if delta > 0 else 3
-            self.set_view(self._view_col + scroll, self._view_row)
-        else:
-            scroll = -3 if dy > 0 else 3
-            self.set_view(self._view_col, self._view_row + scroll)
+        self.mouse_input.wheel(event)
+
+    def tabletEvent(self, event):
+        self.tablet_input.event(event)
 
     def event(self, ev):
         # Qt intercepta Tab/Backtab para navegación de foco ANTES de que
@@ -1148,249 +1065,7 @@ class AsciiCanvas(QWidget):
         return super().event(ev)
 
     def keyPressEvent(self, event: QKeyEvent):
-        if self._matches_action("kb_draw_toggle", event):
-            turning_on = not self.app._kb_draw_mode
-            _log_input.debug(f"kb_draw_toggle  → {'ON' if turning_on else 'OFF'}")
-            self.app.set_kb_draw_mode(turning_on)
-            if turning_on:
-                self._clamp_kb_cursor()
-                self.app.char_panel.set_kb_row_indicator(self._kb_char_row)
-            else:
-                self.app.char_panel.set_kb_row_indicator(None)
-            self.update()
-            return
-
-        if self.app._kb_draw_mode:
-            if event.key() == Qt.Key.Key_Escape:
-                _log_input.debug("kb_draw  Escape → OFF")
-                self.app.set_kb_draw_mode(False)
-                self.app.char_panel.set_kb_row_indicator(None)
-                self.update()
-                return
-            if self._handle_kb_draw_key(event):
-                return
-            event.ignore()
-            return
-
-        if event.key() == Qt.Key.Key_Space and self._tool_state == _STANDBY:
-            self._space_held = True
-            self.setCursor(Qt.CursorShape.SizeAllCursor)
-            _log_input.debug("key_press  Space → scroll mode")
-        elif event.key() in (Qt.Key.Key_Control,):
-            self._ctrl_held       = True
-            self._cel_bounds_a    = None   # recomputa para la capa activa actual
-            self._cel_guides_key  = None
-            self._cel_guides_data = None
-            _log_input.debug(f"key_press  Ctrl → cel guides  cursor={self._cursor_cell}")
-            if self._cursor_cell:
-                col, row = self._cursor_cell
-                self._cel_guides_pos = (col, row)
-                self._update_cel_guides(self.app.doc, col, row, QRect())
-        elif self._matches_action("kb_pick_color", event):
-            self._picker_held = True
-            _log_input.debug("key_press  pick_color-hold ON (modo ratón)")
-        else:
-            event.ignore()  # propagar al padre (atajos de app)
+        self.keyboard_input.press(event)
 
     def keyReleaseEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_Space:
-            self._space_held = False
-            self.setCursor(Qt.CursorShape.BlankCursor)
-        elif event.key() in (Qt.Key.Key_Control,):
-            self._ctrl_held       = False
-            self._cel_guides_pos  = None
-            self._cel_guides_data = None
-            self._cel_guides_key  = None
-            _log_input.debug("key_release  Ctrl → cel guides off")
-            self.update()
-        elif self._matches_action("kb_pick_color", event):
-            self._picker_held = False
-            _log_input.debug("key_release  pick_color-hold OFF (modo ratón)")
-        else:
-            event.ignore()
-
-    # ── Modo cursor de teclado (dibujo sin ratón) ───────────────────────────
-
-    def _matches_action(self, action_id: str, event: QKeyEvent) -> bool:
-        combo = QKeyCombination(event.modifiers(), Qt.Key(event.key()))
-        text  = QKeySequence(combo).toString(QKeySequence.SequenceFormat.PortableText)
-        return bool(text) and text in self.app.shortcut_mgr.keys(action_id)
-
-    def _handle_kb_draw_key(self, event: QKeyEvent) -> bool:
-        """Interpreta una tecla mientras el modo cursor está activo.
-        Devuelve True si la consumió (no debe propagarse)."""
-        doc = self.app.doc
-        if self._kb_cursor is None:
-            self._clamp_kb_cursor()
-        col, row = self._kb_cursor
-        _log_input.debug(f"kb_draw  key={event.text()!r}  cursor=({col},{row})  target={self._kb_target}")
-
-        if self._matches_action("kb_cursor_up", event):
-            row = max(0, row - 1)
-        elif self._matches_action("kb_cursor_down", event):
-            row = min(doc.height - 1, row + 1)
-        elif self._matches_action("kb_cursor_left", event):
-            col = max(0, col - 1)
-        elif self._matches_action("kb_cursor_right", event):
-            col = min(doc.width - 1, col + 1)
-        elif self._matches_action("kb_pan_up", event):
-            self.set_view(self._view_col, self._view_row - 1)
-            return True
-        elif self._matches_action("kb_pan_down", event):
-            self.set_view(self._view_col, self._view_row + 1)
-            return True
-        elif self._matches_action("kb_pan_left", event):
-            self.set_view(self._view_col - 1, self._view_row)
-            return True
-        elif self._matches_action("kb_pan_right", event):
-            self.set_view(self._view_col + 1, self._view_row)
-            return True
-        elif self._matches_action("kb_execute", event):
-            _log_input.debug(f"kb_draw  execute tool={self.app.active_tool.name}  ({col},{row})")
-            self._kb_run_tool(col, row)
-            return True
-        elif self._matches_action("kb_erase", event):
-            _log_input.debug(f"kb_draw  erase  ({col},{row})")
-            self._erase_at(col, row)
-            return True
-        elif self._matches_action("kb_toggle_fgbg", event):
-            self._kb_target = "bg" if self._kb_target == "fg" else "fg"
-            _log_input.debug(f"kb_draw  toggle_fgbg  → {self._kb_target}")
-            self.app.statusbar.showMessage(
-                f"Editando color de {'fondo' if self._kb_target == 'bg' else 'frente'}", 1500)
-            self.update()
-            return True
-        elif self._matches_action("kb_pick_color", event):
-            _log_input.debug(f"kb_draw  pick_color  ({col},{row})")
-            self.app._tools["eyedropper"].on_start(col, row, 1)
-            return True
-        elif self._matches_action("kb_color_up", event):
-            self._kb_cycle_color(-1, axis="row")
-            return True
-        elif self._matches_action("kb_color_down", event):
-            self._kb_cycle_color(+1, axis="row")
-            return True
-        elif self._matches_action("kb_color_left", event):
-            self._kb_cycle_color(-1, axis="col")
-            return True
-        elif self._matches_action("kb_color_right", event):
-            self._kb_cycle_color(+1, axis="col")
-            return True
-        elif self._matches_action("kb_char_row_up", event):
-            self._kb_char_row = max(0, self._kb_char_row - 1)
-            self.app.char_panel.set_kb_row_indicator(self._kb_char_row)
-            _log_input.debug(f"kb_draw  char_row → {self._kb_char_row}")
-            self.update()
-            return True
-        elif self._matches_action("kb_char_row_down", event):
-            panel   = self.app.char_panel
-            n_chars = len(panel.group_chars(panel.current_group_index()))
-            max_row = max(0, (n_chars - 1) // 10)
-            self._kb_char_row = min(max_row, self._kb_char_row + 1)
-            panel.set_kb_row_indicator(self._kb_char_row)
-            _log_input.debug(f"kb_draw  char_row → {self._kb_char_row}")
-            self.update()
-            return True
-        elif self._matches_action("kb_char_group_prev", event):
-            panel = self.app.char_panel
-            n     = len(panel.group_names())
-            panel.select_group((panel.current_group_index() - 1) % n)
-            self._kb_char_row = 0
-            panel.set_kb_row_indicator(self._kb_char_row)
-            _log_input.debug(f"kb_draw  char_group → {panel.current_group_index()}")
-            self.update()
-            return True
-        elif self._matches_action("kb_char_group_next", event):
-            panel = self.app.char_panel
-            n     = len(panel.group_names())
-            panel.select_group((panel.current_group_index() + 1) % n)
-            self._kb_char_row = 0
-            panel.set_kb_row_indicator(self._kb_char_row)
-            _log_input.debug(f"kb_draw  char_group → {panel.current_group_index()}")
-            self.update()
-            return True
-        elif (Qt.Key.Key_0 <= event.key() <= Qt.Key.Key_9
-              and event.modifiers() == Qt.KeyboardModifier.NoModifier):
-            slot = 9 if event.key() == Qt.Key.Key_0 else event.key() - Qt.Key.Key_1
-            ok   = self.app.char_panel.pick_slot(self._kb_char_row, slot)
-            _log_input.debug(f"kb_draw  pick_char  row={self._kb_char_row}  slot={slot}  ok={ok}")
-            return True
-        else:
-            _log_input.debug(f"kb_draw  key sin acción asignada: {event.text()!r}")
-            return False
-
-        self._kb_cursor = (col, row)
-        self._ensure_kb_cursor_visible()
-        self.update()
-        return True
-
-    def _clamp_kb_cursor(self):
-        """Ancla/reancla el cursor de teclado dentro de los límites del documento.
-        _view_col/_view_row pueden ser negativos (lienzo centrado si es más
-        chico que el viewport), así que no sirven como posición sin recortar."""
-        doc = self.app.doc
-        col, row = self._kb_cursor if self._kb_cursor is not None else (self._view_col, self._view_row)
-        col = max(0, min(int(col), doc.width  - 1))
-        row = max(0, min(int(row), doc.height - 1))
-        self._kb_cursor = (col, row)
-
-    def _kb_run_tool(self, col: int, row: int):
-        """Ejecuta la herramienta activa en una sola celda (equivale a clic sin arrastre)."""
-        tool = self.app.active_tool
-        tool.on_start(col, row, 1)
-        tool.on_end(col, row, 1)
-        if self.minimap:
-            self.minimap.invalidate()
-        self.update()
-
-    def _erase_at(self, col: int, row: int):
-        """Borra una celda con la herramienta borrador, sin cambiar la activa (como el clic derecho)."""
-        saved = self.app.active_tool
-        self.app.active_tool = self.app._tools["eraser"]
-        self.app.active_tool.on_start(col, row, 1)
-        self.app.active_tool.on_end(col, row, 1)
-        self.app.active_tool = saved
-        if self.minimap:
-            self.minimap.invalidate()
-        self.update()
-
-    def _kb_cycle_color(self, direction: int, axis: str):
-        """Navega la paleta activa; el color bajo el cursor se aplica de inmediato
-        (fg o bg según _kb_target). axis='row' salta de fila (I/K), 'col' de
-        columna (J/L) — misma grilla que ColorPanel."""
-        from core.color_service import palette_cols
-        svc   = self.app.color_service
-        count = svc.count()
-        step  = palette_cols(svc.mode) if axis == "row" else 1
-        current = self.app.fg_color if self._kb_target == "fg" else self.app.bg_color
-        new_idx = (current + direction * step) % count
-        _log_input.debug(f"kb_draw  color {self._kb_target}  {current} → {new_idx}  (axis={axis})")
-        if self._kb_target == "fg":
-            self.app.set_fg_color(new_idx)
-        else:
-            self.app.set_bg_color(new_idx)
-
-    def _ensure_kb_cursor_visible(self):
-        """Desplaza la vista lo mínimo necesario para mantener el cursor de teclado visible."""
-        col, row = self._kb_cursor
-        vis_c = max(1, self.width()  // self._cell_w)
-        vis_r = max(1, self.height() // self._cell_h)
-        new_col, new_row = self._view_col, self._view_row
-        if col < self._view_col:
-            new_col = col
-        elif col >= self._view_col + vis_c:
-            new_col = col - vis_c + 1
-        if row < self._view_row:
-            new_row = row
-        elif row >= self._view_row + vis_r:
-            new_row = row - vis_r + 1
-        if (new_col, new_row) != (self._view_col, self._view_row):
-            self.set_view(new_col, new_row)
-
-    @staticmethod
-    def _qt_button(btn) -> int:
-        from PySide6.QtCore import Qt as _Qt
-        if btn == _Qt.MouseButton.LeftButton:   return 1
-        if btn == _Qt.MouseButton.MiddleButton: return 2
-        if btn == _Qt.MouseButton.RightButton:  return 3
-        return 1
+        self.keyboard_input.release(event)

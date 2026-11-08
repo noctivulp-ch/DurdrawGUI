@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QTabWidget, QWidget,
     QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QGroupBox, QRadioButton, QHeaderView,
-    QAbstractItemView, QSizePolicy, QFontComboBox,
+    QAbstractItemView, QSizePolicy, QFontComboBox, QLineEdit,
 )
 from PySide6.QtCore import Qt, QKeyCombination
 from PySide6.QtGui  import QFont, QKeySequence, QFontDatabase, QColor
@@ -19,17 +19,24 @@ from core.theme     import NAMES as THEME_NAMES, SYSTEM, DARK, LIGHT
 
 # ══════════════════════════════════════════════════════════════════════════════
 class ShortcutCapture(QDialog):
-    """Mini-diálogo que captura una pulsación de tecla."""
+    """Mini-diálogo que captura una pulsación de tecla o un clic de ratón/tableta
+    (formato "Mouse:<nombre de Qt.MouseButton>", ej. "Mouse:RightButton")."""
 
-    def __init__(self, parent, current_key: str):
+    def __init__(self, parent, current_key: str, mouse_only: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Captura de atajo")
         self.setModal(True)
-        self.setFixedSize(340, 130)
+        self.setFixedSize(360, 150)
         self._captured: str | None = None
+        # Las acciones de "Ratón y tableta" solo se leen como botones
+        # (ui/input/base.py); las demás son QAction y solo entienden teclas.
+        self._mouse_only = mouse_only
 
+        pedido = ("Haz clic con el botón que quieras asignar (sirve también "
+                  "para los botones de la tableta)…" if mouse_only
+                  else "Presiona la combinación de teclas deseada…")
         lbl = QLabel(f"Atajo actual: <b>{current_key or '(ninguno)'}</b><br>"
-                     "Presiona la combinación de teclas deseada…<br>"
+                     f"{pedido}<br>"
                      "(Supr/Retroceso para dejar el atajo sin asignar)")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
@@ -57,9 +64,23 @@ class ShortcutCapture(QDialog):
             self._status.setText("Atajo eliminado")
             self.accept()
             return
+        if self._mouse_only:
+            self._status.setText("Esta acción solo admite botones del ratón o la tableta")
+            return
         mods = event.modifiers()
         seq  = QKeySequence(QKeyCombination(mods, Qt.Key(key)))
         self._captured = seq.toString(QKeySequence.SequenceFormat.PortableText)
+        self._status.setText(f"Capturado: <b>{self._captured}</b>")
+        self.accept()
+
+    def mousePressEvent(self, event):
+        if not self._mouse_only:
+            super().mousePressEvent(event)
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._status.setText("El botón izquierdo dibuja: no se puede reasignar")
+            return
+        self._captured = f"Mouse:{event.button().name}"
         self._status.setText(f"Capturado: <b>{self._captured}</b>")
         self.accept()
 
@@ -116,11 +137,13 @@ class _ShortcutsTab(QWidget):
                 header.setFlags(Qt.ItemFlag.NoItemFlags)
                 font = header.font()
                 font.setBold(True)
+                font.setPointSize(font.pointSize() + 3)
                 header.setFont(font)
                 header.setBackground(QColor("#3a3a3a"))
                 header.setForeground(QColor("#e0e0e0"))
                 table.setItem(row, self._COL_LABEL, header)
                 table.setSpan(row, 0, 1, 3)
+                table.setRowHeight(row, table.rowHeight(row) + 8)
                 continue
             label      = shortcut_mgr.label(action_id)
             key1, key2 = shortcut_mgr.keys(action_id)
@@ -130,6 +153,11 @@ class _ShortcutsTab(QWidget):
 
         table.cellDoubleClicked.connect(self._on_double_click)
         self._table = table
+
+        search = QLineEdit()
+        search.setPlaceholderText("Buscar atajo por nombre…")
+        search.textChanged.connect(self._on_search)
+        self._search = search
 
         btn_reset_sel = QPushButton("Restablecer seleccionado")
         btn_reset_sel.clicked.connect(self._reset_selected)
@@ -142,9 +170,25 @@ class _ShortcutsTab(QWidget):
         btn_row.addStretch()
 
         layout = QVBoxLayout(self)
+        layout.addWidget(search)
         layout.addWidget(table)
         layout.addWidget(QLabel("Doble clic en Atajo 1 o Atajo 2 para reasignar. Ambos son opcionales."))
         layout.addLayout(btn_row)
+
+    def _on_search(self, text: str):
+        needle = text.strip().lower()
+        header_row, header_visible = None, False
+        for row, action_id in enumerate(self._ids):
+            if action_id is None:
+                if header_row is not None:
+                    self._table.setRowHidden(header_row, not header_visible)
+                header_row, header_visible = row, False
+                continue
+            visible = (not needle) or (needle in self._mgr.label(action_id).lower())
+            self._table.setRowHidden(row, not visible)
+            header_visible = header_visible or visible
+        if header_row is not None:
+            self._table.setRowHidden(header_row, not header_visible)
 
     def _on_double_click(self, row: int, col: int):
         if self._ids[row] is None or col not in (self._COL_KEY1, self._COL_KEY2):
@@ -152,7 +196,8 @@ class _ShortcutsTab(QWidget):
         index     = 0 if col == self._COL_KEY1 else 1
         action_id = self._ids[row]
         current   = self._table.item(row, col).text()
-        dlg = ShortcutCapture(self, current)
+        mouse_only = self._mgr.category(action_id) == "Ratón y tableta"
+        dlg = ShortcutCapture(self, current, mouse_only=mouse_only)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.captured is not None:
             new_key = dlg.captured
             self._dirty[(action_id, index)] = new_key
@@ -273,7 +318,8 @@ class PreferencesDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Preferencias")
-        self.setMinimumSize(520, 480)
+        self.setMinimumSize(640, 600)
+        self.resize(820, 720)
         self._on_accept = on_accept
 
         tabs = QTabWidget()

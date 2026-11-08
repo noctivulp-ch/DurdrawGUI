@@ -1,15 +1,15 @@
 """Gestor de atajos de teclado — configurables por el usuario, hasta 2 combinaciones por acción."""
 
 import json
-import os
-from pathlib import Path
 
-_CFG_DIR  = Path(os.path.expanduser("~/.config/durdrawgui"))
+from core.config import _resolve_config_dir
+
+_CFG_DIR  = _resolve_config_dir()   # respeta --config-dir / DURDRAW_CONFIG_DIR
 _SC_FILE  = _CFG_DIR / "shortcuts.json"
 
 CATEGORY_ORDER = [
     "Herramientas", "Vista", "Edición", "Archivo", "Exportar",
-    "Frame", "Capas", "Dibujo por teclado",
+    "Frame", "Capas", "Dibujo por teclado", "Ratón y tableta",
 ]
 
 # (etiqueta, tecla_primaria_por_defecto, tecla_secundaria_por_defecto, categoría)
@@ -82,7 +82,11 @@ ACTIONS: dict[str, tuple[str, str, str, str]] = {
     # ── Dibujo por teclado ──────────────────────────────────────────────
     # Leídas en vivo por AsciiCanvas mientras el modo está activo — no son
     # QAction globales, así que no chocan con nada del resto de la tabla.
-    "kb_draw_toggle":    ("Activar/desactivar modo cursor de teclado", "Tab", "", "Dibujo por teclado"),
+    # Con modificador a propósito: como QAction de ventana funciona sin
+    # importar qué widget tenga el foco (igual que Ctrl+S, etc.) — un
+    # secundario en Tab suelto degradaría a "solo si el canvas ya tiene
+    # foco" (ver ui/canvas.py::event), así que se descartó.
+    "kb_draw_toggle":    ("Activar/desactivar modo cursor de teclado", "Ctrl+Tab", "", "Dibujo por teclado"),
     "kb_cursor_up":      ("Cursor: mover arriba",     "Up",    "", "Dibujo por teclado"),
     "kb_cursor_down":    ("Cursor: mover abajo",      "Down",  "", "Dibujo por teclado"),
     "kb_cursor_left":    ("Cursor: mover izquierda",  "Left",  "", "Dibujo por teclado"),
@@ -101,11 +105,22 @@ ACTIONS: dict[str, tuple[str, str, str, str]] = {
     "kb_color_right":    ("Paleta: color siguiente",             "L", "", "Dibujo por teclado"),
     # Selección de carácter: las teclas 1-9,0 (fila de 10, posición fija —
     # no configurables) eligen la celda dentro de la fila activa del grupo
-    # de caracteres actual; ver AsciiCanvas._handle_kb_draw_key.
+    # de caracteres actual; ver KeyboardInput._handle_kb_draw_key (ui/input/keyboard.py).
     "kb_char_row_up":    ("Caracteres: fila anterior",    "Ctrl+Up",    "", "Dibujo por teclado"),
     "kb_char_row_down":  ("Caracteres: fila siguiente",   "Ctrl+Down",  "", "Dibujo por teclado"),
     "kb_char_group_prev":("Caracteres: grupo/pestaña anterior", "Ctrl+Left",  "", "Dibujo por teclado"),
     "kb_char_group_next":("Caracteres: grupo/pestaña siguiente","Ctrl+Right", "", "Dibujo por teclado"),
+    # ── Ratón y tableta ──────────────────────────────────────────────────
+    # Los bindings de esta categoría son botones de ratón/tableta, formato
+    # "Mouse:<Qt.MouseButton.name>" (ej. "Mouse:RightButton",
+    # "Mouse:ExtraButton5"), capturados con clic desde Preferencias. No son
+    # QAction (no se registran en App._build_menu). El botón izquierdo no se
+    # admite: es el que dibuja. Aplica igual a botones de mouse y a
+    # los botones laterales de una tableta (ambos llegan como Qt.MouseButton
+    # estándar — ver ui/input/tablet.py).
+    "mouse_erase":       ("Ratón/tableta: borrar",              "Mouse:RightButton", "", "Ratón y tableta"),
+    "mouse_pick_color":  ("Ratón/tableta: recoger color",       "", "", "Ratón y tableta"),
+    "mouse_pan":         ("Ratón: desplazar lienzo (mantener)", "Mouse:MiddleButton", "", "Ratón y tableta"),
 }
 
 
