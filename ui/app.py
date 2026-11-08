@@ -206,6 +206,7 @@ class App(QMainWindow):
         add(em, "Rehacer",          "redo",        self.redo)
         em.addSeparator()
         add(em, "Copiar",           "copy",        self.copy_selection)
+        add(em, "Copiar fusionado", "copy_merged", self.copy_merged_selection)
         add(em, "Cortar",           "cut",         self.cut_selection)
         add(em, "Pegar",            "paste",       self.paste_clipboard)
         em.addSeparator()
@@ -526,6 +527,7 @@ class App(QMainWindow):
     def select_all(self):     self.clipboard_mgr.select_all()
     def deselect(self):       self.clipboard_mgr.deselect()
     def copy_selection(self): self.clipboard_mgr.copy()
+    def copy_merged_selection(self): self.clipboard_mgr.copy_merged()
     def cut_selection(self):  self.clipboard_mgr.cut()
     def paste_clipboard(self):
         if not self.clipboard_mgr.paste():

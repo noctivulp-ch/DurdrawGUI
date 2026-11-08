@@ -41,6 +41,19 @@ class ClipboardManager:
     # ── Copiar / cortar ───────────────────────────────────────────────────────
 
     def copy(self):
+        """Copia la selección de la capa activa, como «Copiar» en Aseprite.
+        Una celda vacía (espacio y bg=0) queda vacía y al pegar es transparente."""
+        if not self.sel_rect:
+            return
+        c0, r0, c1, r1 = self.sel_rect
+        frame = self._app.doc.current_frame()
+        self.clipboard = [
+            [(frame.content[r][c], *frame.newColorMap[r][c]) for c in range(c0, c1 + 1)]
+            for r in range(r0, r1 + 1)
+        ]
+
+    def copy_merged(self):
+        """Copia lo que se ve: todas las capas visibles fundidas («Copiar fusionado»)."""
         if not self.sel_rect:
             return
         c0, r0, c1, r1 = self.sel_rect

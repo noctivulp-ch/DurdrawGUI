@@ -36,7 +36,7 @@ construida con PySide6/Qt6, basada en el motor de archivos y paletas de
 - Capas independientes con nombre, visibilidad individual y orden ajustable.
 - Compositor de abajo hacia arriba: celda vacía (espacio sobre fondo 0) se trata
   como transparente, permitiendo composición no destructiva entre capas.
-- Copiar/pegar lee del fotograma compuesto y escribe en la capa activa.
+- Copiar (`Ctrl+C`) toma solo la capa activa; Copiar fusionado (`Ctrl+Shift+C`) toma lo que se ve, todas las capas visibles. Pegar escribe siempre en la capa activa.
 
 ### Animación
 
@@ -147,7 +147,8 @@ durdrawgui [opciones] [ARCHIVO]
 |-------|--------|
 | `Ctrl+Z` | Deshacer |
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Rehacer |
-| `Ctrl+C` | Copiar selección |
+| `Ctrl+C` | Copiar selección (capa activa) |
+| `Ctrl+Shift+C` | Copiar fusionado (todas las capas visibles) |
 | `Ctrl+X` | Cortar selección |
 | `Ctrl+V` | Pegar |
 | `Ctrl+A` | Seleccionar todo |
@@ -299,7 +300,6 @@ de versiones Qt.
 La interfaz está completa y funcional. Rendimiento medido y resuelto (ADR 0002): 30 FPS al
 reproducir incluso un 240×67 con 10 capas. Pendientes, con detalle en el `ToDo.md` de desarrollo:
 
-- **Rev-3:** decidir si copiar lee del compuesto (como ahora) o de la capa activa.
 - **Fase 11:** importación ANSI e imagen, y exportar capas por separado.
 - **Pendientes menores:** icono de aplicación definitivo; iconos de la barra de herramientas poco
   visibles en el tema claro.

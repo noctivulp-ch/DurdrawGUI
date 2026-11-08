@@ -185,3 +185,24 @@ def test_captura_de_preferencias_no_admite_clic_en_acciones_de_teclado(qapp):
     assert dlg2.captured is None
     QTest.mouseClick(dlg2, Qt.MouseButton.RightButton, pos=QPoint(10, 10))
     assert dlg2.captured == "Mouse:RightButton"
+
+
+def _dos_capas_con_seleccion(app):
+    doc = app.doc
+    doc.layers[0].frame_at(0).content[0][0] = "A"
+    app.add_layer()                                  # la capa nueva queda activa
+    doc.layers[1].frame_at(0).content[0][1] = "B"
+    app.canvas_widget.render_frame()
+    app.clipboard_mgr.sel_rect = (0, 0, 1, 0)
+
+
+def test_ctrl_c_copia_solo_la_capa_activa(app):
+    _dos_capas_con_seleccion(app)
+    _key(app, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert [c[0] for c in app.clipboard_mgr.clipboard[0]] == [" ", "B"]
+
+
+def test_ctrl_shift_c_copia_todas_las_capas_visibles(app):
+    _dos_capas_con_seleccion(app)
+    _key(app, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    assert [c[0] for c in app.clipboard_mgr.clipboard[0]] == ["A", "B"]

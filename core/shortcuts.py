@@ -46,7 +46,8 @@ ACTIONS: dict[str, tuple[str, str, str, str]] = {
     # ── Edición ───────────────────────────────────────────────────────
     "undo":              ("Deshacer",                "Ctrl+Z", "", "Edición"),
     "redo":              ("Rehacer",                 "Ctrl+Y", "Ctrl+Shift+Z", "Edición"),
-    "copy":              ("Copiar",                  "Ctrl+C", "", "Edición"),
+    "copy":              ("Copiar (capa activa)",    "Ctrl+C", "", "Edición"),
+    "copy_merged":       ("Copiar fusionado (todas las capas visibles)", "Ctrl+Shift+C", "", "Edición"),
     "cut":               ("Cortar",                  "Ctrl+X", "", "Edición"),
     "paste":             ("Pegar",                   "Ctrl+V", "", "Edición"),
     "select_all":        ("Seleccionar todo",        "Ctrl+A", "", "Edición"),
