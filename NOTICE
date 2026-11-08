@@ -19,3 +19,12 @@ Componentes de terceros
 - Pillow — MIT-CMU
 - NumPy — BSD-3-Clause
 - imageio — BSD-2-Clause
+
+Archivos de ejemplo de terceros
+-------------------------------
+
+- blackhole-smooth-240x67.dur («Black Hole (stabilized)», conversión «video-to-dur» de un vídeo
+  de origen no indicado) — del repositorio comunitario de Ly, Copyright (C) 2026 by fairyglade;
+  subido por AnErrupTion (commit 2f22cfaf7d). Licencia 0BSD.
+  https://codeberg.org/fairyglade/ly-community/src/branch/main/animations/dur/blackhole-smooth-240x67.dur
+  Se usa como documento grande de prueba en las mediciones de rendimiento.

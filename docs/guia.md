@@ -121,6 +121,7 @@ durdrawgui [opciones] [ARCHIVO]
 | `DURDRAW_CONFIG_DIR` | Equivalente a `--config-dir` |
 | `QT_QPA_PLATFORM` | Plataforma Qt (`wayland` por defecto) |
 | `QT_QPA_PLATFORMTHEME` | Tema Qt (`qt6ct` si existe `~/.config/qt6ct/qt6ct.conf`) |
+| `DURDRAW_RASTER=qpainter` | Pinta el lienzo celda a celda en vez de con el raster NumPy (para comparar o depurar; ver ADR 0002) |
 
 ---
 
@@ -210,7 +211,8 @@ Los pinceles de usuario se guardan en `~/.config/durdrawgui/brushes/`.
 
 ## Tests
 
-58 tests en 5 módulos, ejecutables con pytest sin dependencias de display:
+90 pruebas en 8 módulos, con pytest. Las de interfaz corren en Qt `offscreen` (sin ventanas) y
+con una configuración temporal, sin tocar la del usuario (`tests/conftest.py`):
 
 ```bash
 pytest tests/
@@ -218,11 +220,14 @@ pytest tests/
 
 | Módulo | Cobertura |
 |--------|-----------|
-| `test_document.py` | Compositor de capas, frames, serialización `.durg` / `.dur`, round-trip |
+| `test_document.py` | Compositor de capas, frames, serialización `.durg` / `.dur`, round-trip con 2 capas y 3 frames |
 | `test_movie.py` | Frames, colormap, duplicación, eliminación |
 | `test_tools.py` | Bresenham, contornos de rect y elipse, flood fill |
 | `test_color_service.py` | Modos 16/256, paleta, eventos del bus |
 | `test_file.py` | Round-trip de dimensiones, contenido y colormap |
+| `test_input_e2e.py` | Ratón, teclado y tableta con eventos Qt reales sobre la ventana entera |
+| `test_undo.py` | Deshacer y rehacer con cada herramienta y con varias capas |
+| `test_raster.py` | Paridad píxel a píxel del raster NumPy con QPainter (lienzo), con Pillow (exportación) y del minimapa; caché por frame |
 
 ---
 
@@ -291,18 +296,13 @@ de versiones Qt.
 
 ## Estado del proyecto
 
-La interfaz base está completa y funcional. Pendientes antes de una distribución
-formal:
+La interfaz está completa y funcional. Rendimiento medido y resuelto (ADR 0002): 30 FPS al
+reproducir incluso un 240×67 con 10 capas. Pendientes, con detalle en el `ToDo.md` de desarrollo:
 
-- **Revisiones de arquitectura:** undo/redo con scope global de documento (actualmente
-  por capa), rendimiento del compositor en documentos grandes, cleanup de
-  suscripciones al EventBus al cerrar documentos.
-- **Fase 10:** atajos configurables desde la UI (el keymap ya existe, falta el panel).
-- **Fase 11:** exportación mejorada (GIF, PNG secuencia, ANSI por capas) e
-  importación ANSI — parcialmente implementada, sin pruebas.
-- **Fase 12:** selector de tema integrado en el menú Vista.
-- **Pendientes menores:** icono de aplicación definitivo.
-- **Licencia:** decisión pendiente para distribución de binarios.
+- **Rev-3:** decidir si copiar lee del compuesto (como ahora) o de la capa activa.
+- **Fase 11:** importación ANSI e imagen, y exportar capas por separado.
+- **Pendientes menores:** icono de aplicación definitivo; iconos de la barra de herramientas poco
+  visibles en el tema claro.
 
 ---
 

@@ -19,6 +19,17 @@ los editores de *pixel art*: herramientas de dibujo, capas y animación por foto
 motor de archivos y paletas de [durdraw](https://github.com/cmang/durdraw), de Sam Foster, y le
 añade una interfaz gráfica completa construida con Qt 6, nativa en Wayland y X11.
 
+<p align="center">
+  <img src="docs/capturas/editor-oscuro.png" width="420" alt="El editor en tema oscuro con una escena nocturna de cuatro capas">
+  &nbsp;
+  <img src="docs/capturas/editor-claro.png" width="420" alt="El mismo editor en tema claro, con el minimapa abierto">
+</p>
+<p align="center">
+  <img src="docs/capturas/temas-corte.png" width="640" alt="El lienzo con zoom acercado, mitad en tema oscuro y mitad en claro">
+</p>
+
+<p align="center"><sub>Arte de demostración generado por <code>tools/capturas/capturas.py</code>, que también regenera las capturas.</sub></p>
+
 ## Funciones principales
 
 - Lápiz, borrador, relleno, cuentagotas, selección, línea, rectángulo y elipse.
@@ -26,7 +37,11 @@ añade una interfaz gráfica completa construida con Qt 6, nativa en Wayland y X
 - Modos de 16 y 256 colores.
 - Panel de caracteres: bloques Unicode, el juego CP-437 completo, flechas y símbolos.
 - Capas, animación por fotogramas y deshacer ilimitado por sesión.
-- Zoom anclado al cursor y atajos de teclado configurables.
+- Exportación a ANSI, `.dur`, PNG, GIF animado y MP4.
+- Zoom anclado al cursor, atajos de teclado configurables y modo de dibujo solo con teclado.
+- Botones de ratón y de tableta gráfica configurables.
+- Reproducción fluida a 30 FPS incluso en lienzos de 240×67 con 10 capas
+  ([cifras](docs/pendientes/rust-modulos.md)).
 
 ## Tecnologías
 
@@ -42,6 +57,7 @@ añade una interfaz gráfica completa construida con Qt 6, nativa en Wayland y X
 ```bash
 pip install PySide6 Pillow numpy
 python main.py
+python -m pytest            # pruebas
 ```
 
 Requiere Python ≥ 3.11. La compilación del AppImage está en [`BUILD.md`](BUILD.md).
@@ -49,7 +65,7 @@ Requiere Python ≥ 3.11. La compilación del AppImage está en [`BUILD.md`](BUI
 ## Documentación
 
 [`docs/guia.md`](docs/guia.md): todas las funciones, atajos de teclado, archivos de usuario y
-pruebas.
+pruebas. Las decisiones de arquitectura (ADR) están en [`docs/decisiones/`](docs/decisiones/).
 
 ## Licencia
 
