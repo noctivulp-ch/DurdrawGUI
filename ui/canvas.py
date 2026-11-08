@@ -24,7 +24,9 @@ API pública idéntica a la versión Tkinter para que tools/ y app.py no cambien
 from __future__ import annotations
 
 import math
+import os
 
+import numpy as np
 from PySide6.QtWidgets import QWidget, QSizePolicy
 from PySide6.QtCore    import Qt, QRect, QRectF, QPoint, QTimer, QEvent
 from PySide6.QtGui     import (
@@ -33,6 +35,8 @@ from PySide6.QtGui     import (
 )
 
 import core.log as log
+from core.raster import CharTable, TileCache, composite_codes, palette_argb
+from ui.glyph_atlas import GlyphAtlas, qt_draw_glyph
 from ui.minimap import MinimapOverlay
 from ui.input.mouse    import MouseInput
 from ui.input.keyboard import KeyboardInput
@@ -295,21 +299,24 @@ class AsciiCanvas(QWidget):
         self._cel_guides_key  = None
         self._cel_guides_data = None
 
-        # ── Caché de celdas compuestas por frame ──────────────────────────
-        # _frame_caches[frame_idx] → {(row,col): (ch,fg,bg)} para cada frame visitado.
-        # Persiste entre cambios de frame durante la animación; solo se invalida
-        # cuando el contenido real cambia (edición) o la estructura de capas cambia.
-        # Los datos son resolución-independientes: zoom/font NO los invalida.
-        #
-        # _composite_cache apunta SIEMPRE a _frame_caches[current_frame_idx].
+        # ── Frames compuestos y raster (ver docs/decisiones/0002-raster-numpy.md) ──
+        # _frame_arrays[frame_idx] → (códigos, fg, bg), matrices del frame
+        # compuesto. Persisten entre cambios de frame durante la animación; se
+        # invalidan al editar (render_frame) o al cambiar las capas. No dependen
+        # del zoom ni de la fuente: eso lo lleva el atlas de glifos.
         # _last_frame_idx distingue "navegación de frame" de "edición de contenido"
         # en render_frame() sin necesidad de parámetros extra desde app.py.
         # _doc_id detecta cambio de documento (new_file/open_file).
-        self._frame_caches:   dict[int, dict] = {}
-        self._composite_cache: dict            = {}
-        self._last_frame_idx:  int             = -1
-        self._doc_id:          int             = -1
-        self._frame_caches[0] = self._composite_cache
+        self._char_table = CharTable()
+        self._frame_arrays: dict[int, tuple] = {}
+        self._last_frame_idx: int = -1
+        self._doc_id:         int = -1
+        self._atlas: GlyphAtlas | None = None
+        self._pal_key = None
+        self._pal: np.ndarray | None = None
+        self._tiles = TileCache()
+        # DURDRAW_RASTER=qpainter fuerza el pintado celda a celda (comparar, depurar).
+        self._raster_forced_off = os.environ.get("DURDRAW_RASTER", "") == "qpainter"
 
         # ── Minimapa ──────────────────────────────────────────────────────
         # Se asigna desde App.__init__ después de crear MinimapOverlay.
@@ -326,6 +333,8 @@ class AsciiCanvas(QWidget):
         app.bus.on("color_mode_changed", lambda _: self.update())
         # Cambio de estructura de capas → invalida caches de TODOS los frames
         app.bus.on("layers_changed", lambda _: self.invalidate_all_frames())
+        # Insertar o borrar frames desplaza los índices de _frame_arrays.
+        app.bus.on("frames_changed", lambda _: self.invalidate_all_frames())
 
         _log.debug("AsciiCanvas Qt inicializado")
 
@@ -467,34 +476,24 @@ class AsciiCanvas(QWidget):
 
         # ── Detectar cambio de documento (new_file / open_file) ───────────
         if doc_id != self._doc_id:
-            self._frame_caches.clear()
+            self._frame_arrays.clear()
             self._doc_id         = doc_id
             self._last_frame_idx = -1
 
         old_idx = self._last_frame_idx
 
         if old_idx < 0 or new_idx != old_idx:
-            # Navegación de frame (animación / teclas de frame):
-            # — guarda el caché parcial del frame anterior
-            # — carga el del nuevo frame (o vacío si es la primera visita)
-            if old_idx >= 0 and self._composite_cache:
-                self._frame_caches[old_idx] = self._composite_cache
-            cached = self._frame_caches.get(new_idx)
-            if cached is None:
-                cached = {}
-                self._frame_caches[new_idx] = cached
-            self._composite_cache = cached
+            # Navegación de frame (animación / teclas de frame): el frame nuevo
+            # se compone en paintEvent si no estaba ya.
             _log.debug(
                 f"render_frame  nav  {old_idx}→{new_idx}"
-                f"  cache_hit={bool(cached)}"
-                f"  frames_cached={len(self._frame_caches)}"
+                f"  cache_hit={new_idx in self._frame_arrays}"
+                f"  frames_cached={len(self._frame_arrays)}"
             )
         else:
-            # Edición de contenido (dibujar, pegar, undo, …):
-            # — invalida solo el frame actual
-            self._frame_caches.pop(new_idx, None)
-            self._composite_cache = {}
-            self._frame_caches[new_idx] = self._composite_cache
+            # Edición de contenido (dibujar, pegar, undo, …): invalida solo el
+            # frame actual.
+            self._frame_arrays.pop(new_idx, None)
             _log.debug(f"render_frame  edit  frame={new_idx}")
 
         self._last_frame_idx  = new_idx
@@ -508,11 +507,8 @@ class AsciiCanvas(QWidget):
     def invalidate_all_frames(self):
         """Invalida el caché de todos los frames (cambio de estructura de capas).
         No llama update() — el llamante (render_frame o similares) lo hace."""
-        self._frame_caches.clear()
-        self._composite_cache = {}
-        cur = self.app.doc.current_frame_idx
-        self._frame_caches[cur] = self._composite_cache
-        self._last_frame_idx = cur
+        self._frame_arrays.clear()
+        self._last_frame_idx = self.app.doc.current_frame_idx
         _log.debug("invalidate_all_frames  (layers_changed)")
 
     def update_cell(self, col, row, _ch=None, _fg=None, _bg=None):
@@ -520,9 +516,31 @@ class AsciiCanvas(QWidget):
         # _ch/_fg/_bg de la herramienta activa se IGNORAN: la celda se recompone
         # vía doc.composite_cell() en paintEvent, de modo que dibujar en una capa
         # inferior o borrar (space + bg=0) respeta siempre la fusión entre capas.
-        self._composite_cache.pop((row, col), None)
+        doc = self.app.doc
+        arrays = self._frame_arrays.get(doc.current_frame_idx)
+        if arrays is not None and 0 <= row < doc.height and 0 <= col < doc.width:
+            ch, fg, bg = doc.composite_cell(col, row)
+            codes, fgs, bgs = arrays
+            codes[row, col] = self._char_table.code(ch)
+            fgs[row, col] = fg
+            bgs[row, col] = bg
         sx, sy = self.cell_to_screen(col, row)
         self.update(QRect(sx, sy, self._cell_w, self._cell_h))
+
+    # Por encima de este número de celdas sale más barato recomponer el frame
+    # entero que tocar celda a celda (medido con el relleno: ADR 0002).
+    _BATCH_FULL = 256
+
+    def update_cells(self, cells):
+        """Como update_cell() para muchas celdas a la vez (relleno, borrar
+        selección): con pocas, celda a celda; con muchas, un solo repintado."""
+        cells = list(cells)
+        if len(cells) <= self._BATCH_FULL:
+            for c, r in cells:
+                self.update_cell(c, r)
+            return
+        self._frame_arrays.pop(self.app.doc.current_frame_idx, None)
+        self.update()
 
     def set_view(self, col: int, row: int):
         doc = self.app.doc
@@ -767,33 +785,14 @@ class AsciiCanvas(QWidget):
             f"  cols={col_lo}:{col_hi}  rows={row_lo}:{row_hi}"
         )
 
-        # _composite_cache apunta al dict del frame actual en _frame_caches.
-        # Se construye lazily (solo celdas visibles); persiste entre repaints
-        # del mismo frame y entre visitas de animación al mismo frame.
-        cache = self._composite_cache
-
-        _last_fg = None
-        for drow in range(row_lo, row_hi):
-            vr = drow - vr_off
-            y_row = vr * rh
-            painter.setClipRect(0, y_row, self.width(), rh)
-            for dcol in range(col_lo, col_hi):
-                vc = dcol - vc_off
-                key = (drow, dcol)
-                if key not in cache:
-                    cache[key] = doc.composite_cell(dcol, drow)
-                cell_ch, fg_idx, bg_idx = cache[key]
-                x = vc * cw
-                bg_qc = _qcolor(bg_idx, svc)
-                painter.fillRect(x, y_row, cw + 1, rh + 1, bg_qc)
-                if cell_ch and cell_ch not in _EMPTY_CHARS:
-                    fg_qc = _qcolor(fg_idx, svc)
-                    if not _draw_block_element(painter, cell_ch, x, y_row, cw, rh, fg_qc, bg_qc):
-                        if fg_idx != _last_fg:
-                            painter.setPen(fg_qc)
-                            _last_fg = fg_idx
-                        painter.drawText(QRect(x, y_row, cw, rh), Qt.AlignmentFlag.AlignCenter, cell_ch)
-        painter.setClipping(False)
+        if row_hi > row_lo and col_hi > col_lo:
+            codes, fgs, bgs = self._current_arrays(doc)
+            if self._raster_usable():
+                self._paint_cells_raster(painter, svc, codes, fgs, bgs,
+                                         row_lo, row_hi, col_lo, col_hi, vr_off, vc_off)
+            else:
+                self._paint_cells_qpainter(painter, svc, codes, fgs, bgs,
+                                           row_lo, row_hi, col_lo, col_hi, vr_off, vc_off)
 
         # ── Borde del documento ───────────────────────────────────────────
         self._paint_doc_border(painter, doc, cw, rh)
@@ -857,6 +856,88 @@ class AsciiCanvas(QWidget):
             painter.setPen(QPen(QColor(color), 2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(x + 1, y + 1, cw - 3, rh - 3)
+
+    # ── Celdas: matrices del frame, raster NumPy y respaldo QPainter ───────
+
+    def _current_arrays(self, doc):
+        """(códigos, fg, bg) del frame actual; lo compone entero la primera vez."""
+        idx = doc.current_frame_idx
+        arrays = self._frame_arrays.get(idx)
+        if arrays is None:
+            arrays = composite_codes(doc, idx, self._char_table)
+            self._frame_arrays[idx] = arrays
+        return arrays
+
+    def frame_cells(self, doc):
+        """(códigos, fg, bg, caracteres) del frame actual, para el minimapa."""
+        codes, fgs, bgs = self._current_arrays(doc)
+        return codes, fgs, bgs, self._char_table.chars
+
+    def _raster_usable(self) -> bool:
+        """El raster necesita celdas de un número entero de píxeles del
+        dispositivo; con un DPR fraccionario se pinta celda a celda."""
+        if self._raster_forced_off:
+            return False
+        dpr = self.devicePixelRatioF()
+        return (abs(self._cell_w * dpr - round(self._cell_w * dpr)) < 1e-6
+                and abs(self._cell_h * dpr - round(self._cell_h * dpr)) < 1e-6)
+
+    def _palette_argb(self, svc) -> np.ndarray:
+        colors = tuple(svc.palette()) if svc is not None else tuple(ANSI_COLORS)
+        if colors != self._pal_key:
+            self._pal_key = colors
+            self._pal = palette_argb(colors)
+            self._tiles.clear()
+        return self._pal
+
+    def _glyph_atlas(self) -> GlyphAtlas:
+        dpr = self.devicePixelRatioF()
+        key = (self._font.family(), self._font.pointSize(), self._cell_w, self._cell_h, dpr)
+        if self._atlas is None or self._atlas.key() != key:
+            self._atlas = GlyphAtlas(QFont(self._font), self._cell_w, self._cell_h, dpr,
+                                     qt_draw_glyph(_draw_block_element))
+            self._tiles.clear()
+            _log.debug(f"glyph_atlas  nuevo  {key}")
+        self._atlas.ensure(self._char_table.chars)
+        return self._atlas
+
+    def _paint_cells_raster(self, painter, svc, codes, fgs, bgs,
+                            row_lo, row_hi, col_lo, col_hi, vr_off, vc_off):
+        atlas = self._glyph_atlas()
+        x0 = (col_lo - vc_off) * self._cell_w
+        y0 = (row_lo - vr_off) * self._cell_h
+        sub = (slice(row_lo, row_hi), slice(col_lo, col_hi))
+        midx = atlas.mask_indices(codes[sub], x0, y0)
+        img = self._tiles.image(midx, fgs[sub], bgs[sub], atlas.mask_array, self._palette_argb(svc))
+        h, w = img.shape
+        qimg = QImage(img.data, w, h, w * 4, QImage.Format.Format_RGB32)
+        qimg.setDevicePixelRatio(atlas.dpr)
+        painter.drawImage(QPoint(x0, y0), qimg)
+
+    def _paint_cells_qpainter(self, painter, svc, codes, fgs, bgs,
+                              row_lo, row_hi, col_lo, col_hi, vr_off, vc_off):
+        cw, rh = self._cell_w, self._cell_h
+        chars = self._char_table.chars
+        sub = (slice(row_lo, row_hi), slice(col_lo, col_hi))
+        c_rows, f_rows, b_rows = codes[sub].tolist(), fgs[sub].tolist(), bgs[sub].tolist()
+        _last_fg = None
+        for i, drow in enumerate(range(row_lo, row_hi)):
+            y_row = (drow - vr_off) * rh
+            painter.setClipRect(0, y_row, self.width(), rh)
+            for j, dcol in enumerate(range(col_lo, col_hi)):
+                cell_ch = chars[c_rows[i][j]]
+                fg_idx, bg_idx = f_rows[i][j], b_rows[i][j]
+                x = (dcol - vc_off) * cw
+                bg_qc = _qcolor(bg_idx, svc)
+                painter.fillRect(x, y_row, cw + 1, rh + 1, bg_qc)
+                if cell_ch and cell_ch not in _EMPTY_CHARS:
+                    fg_qc = _qcolor(fg_idx, svc)
+                    if not _draw_block_element(painter, cell_ch, x, y_row, cw, rh, fg_qc, bg_qc):
+                        if fg_idx != _last_fg:
+                            painter.setPen(fg_qc)
+                            _last_fg = fg_idx
+                        painter.drawText(QRect(x, y_row, cw, rh), Qt.AlignmentFlag.AlignCenter, cell_ch)
+        painter.setClipping(False)
 
     # ── Helpers de paintEvent ─────────────────────────────────────────────
 

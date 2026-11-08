@@ -7,6 +7,7 @@ App.py delega aquí; no contiene lógica de UI.
 """
 
 from copy import deepcopy
+from core.grid_copy import copy_content, copy_colors
 
 
 class ClipboardManager:
@@ -69,8 +70,8 @@ class ClipboardManager:
         frame  = doc.current_frame()
         col0, row0 = (self.sel_rect[0], self.sel_rect[1]) if self.sel_rect else (0, 0)
 
-        snap_c = deepcopy(frame.content)
-        snap_m = deepcopy(frame.newColorMap)
+        snap_c = copy_content(frame.content)
+        snap_m = copy_colors(frame.newColorMap)
         clip   = deepcopy(self.clipboard)
 
         for ri, row_data in enumerate(clip):
@@ -86,17 +87,17 @@ class ClipboardManager:
 
         canvas.render_frame()
 
-        new_c = deepcopy(frame.content)
-        new_m = deepcopy(frame.newColorMap)
+        new_c = copy_content(frame.content)
+        new_m = copy_colors(frame.newColorMap)
 
         def undo():
-            frame.content     = deepcopy(snap_c)
-            frame.newColorMap = deepcopy(snap_m)
+            frame.content     = copy_content(snap_c)
+            frame.newColorMap = copy_colors(snap_m)
             canvas.render_frame()
 
         def redo():
-            frame.content     = deepcopy(new_c)
-            frame.newColorMap = deepcopy(new_m)
+            frame.content     = copy_content(new_c)
+            frame.newColorMap = copy_colors(new_m)
             canvas.render_frame()
 
         self._app.history.push(undo, redo)
@@ -117,26 +118,26 @@ class ClipboardManager:
         canvas = self._app.canvas_widget
         frame  = doc.current_frame()
 
-        snap_c = deepcopy(frame.content)
-        snap_m = deepcopy(frame.newColorMap)
+        snap_c = copy_content(frame.content)
+        snap_m = copy_colors(frame.newColorMap)
 
         for r in range(r0, r1 + 1):
             for c in range(c0, c1 + 1):
                 frame.content[r][c]    = " "
                 frame.newColorMap[r][c] = [7, 0]
-                canvas.update_cell(c, r)
+        canvas.update_cells((c, r) for r in range(r0, r1 + 1) for c in range(c0, c1 + 1))
 
-        new_c = deepcopy(frame.content)
-        new_m = deepcopy(frame.newColorMap)
+        new_c = copy_content(frame.content)
+        new_m = copy_colors(frame.newColorMap)
 
         def undo():
-            frame.content     = deepcopy(snap_c)
-            frame.newColorMap = deepcopy(snap_m)
+            frame.content     = copy_content(snap_c)
+            frame.newColorMap = copy_colors(snap_m)
             canvas.render_frame()
 
         def redo():
-            frame.content     = deepcopy(new_c)
-            frame.newColorMap = deepcopy(new_m)
+            frame.content     = copy_content(new_c)
+            frame.newColorMap = copy_colors(new_m)
             canvas.render_frame()
 
         self._app.history.push(undo, redo)

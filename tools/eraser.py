@@ -1,8 +1,8 @@
-from copy import deepcopy
 import core.log as log
 from core.brush import BrushContext
 from core.tool_registry import register
 from tools.base import bresenham
+from core.grid_copy import copy_content, copy_colors
 
 _log = log.get("tools")
 
@@ -25,8 +25,8 @@ class EraserTool:
     def on_start(self, col, row, button):
         frame = self.app.current_frame()
         self._snapshot = (
-            deepcopy(frame.content),
-            deepcopy(frame.newColorMap),
+            copy_content(frame.content),
+            copy_colors(frame.newColorMap),
         )
         self._prev_cell = None
         self._button = button
@@ -68,17 +68,17 @@ class EraserTool:
     def _push_undo(self):
         snap_content, snap_colors = self._snapshot
         frame = self.app.current_frame()
-        new_content = deepcopy(frame.content)
-        new_colors  = deepcopy(frame.newColorMap)
+        new_content = copy_content(frame.content)
+        new_colors  = copy_colors(frame.newColorMap)
 
         def undo():
-            frame.content     = deepcopy(snap_content)
-            frame.newColorMap = deepcopy(snap_colors)
+            frame.content     = copy_content(snap_content)
+            frame.newColorMap = copy_colors(snap_colors)
             self.app.canvas_widget.render_frame(frame)
 
         def redo():
-            frame.content     = deepcopy(new_content)
-            frame.newColorMap = deepcopy(new_colors)
+            frame.content     = copy_content(new_content)
+            frame.newColorMap = copy_colors(new_colors)
             self.app.canvas_widget.render_frame(frame)
 
         self.app.history.push(undo, redo)

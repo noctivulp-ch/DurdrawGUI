@@ -1,7 +1,7 @@
-from copy import deepcopy
 from collections import deque
 import core.log as log
 from core.tool_registry import register
+from core.grid_copy import copy_content, copy_colors
 
 _log = log.get("tools")
 
@@ -24,7 +24,7 @@ class FillTool:
         frame = self.app.current_frame()
         if not (0 <= col < frame.width and 0 <= row < frame.height):
             return
-        self._snapshot = (deepcopy(frame.content), deepcopy(frame.newColorMap))
+        self._snapshot = (copy_content(frame.content), copy_colors(frame.newColorMap))
 
         target_ch  = frame.content[row][col]
         _log.debug(f"fill.start  ({col},{row})  target='{target_ch}'")
@@ -57,8 +57,7 @@ class FillTool:
             changed.append((c, r))
             queue.extend([(c+1, r), (c-1, r), (c, r+1), (c, r-1)])
 
-        for c, r in changed:
-            self.app.canvas_widget.update_cell(c, r, new_ch, new_fg, new_bg)
+        self.app.canvas_widget.update_cells(changed)
 
         _log.debug(f"fill.end  cells_filled={len(changed)}")
         self._push_undo(frame)
@@ -71,17 +70,17 @@ class FillTool:
 
     def _push_undo(self, frame):
         snap_content, snap_colors = self._snapshot
-        new_content = deepcopy(frame.content)
-        new_colors  = deepcopy(frame.newColorMap)
+        new_content = copy_content(frame.content)
+        new_colors  = copy_colors(frame.newColorMap)
 
         def undo():
-            frame.content     = deepcopy(snap_content)
-            frame.newColorMap = deepcopy(snap_colors)
+            frame.content     = copy_content(snap_content)
+            frame.newColorMap = copy_colors(snap_colors)
             self.app.canvas_widget.render_frame(frame)
 
         def redo():
-            frame.content     = deepcopy(new_content)
-            frame.newColorMap = deepcopy(new_colors)
+            frame.content     = copy_content(new_content)
+            frame.newColorMap = copy_colors(new_colors)
             self.app.canvas_widget.render_frame(frame)
 
         self.app.history.push(undo, redo)

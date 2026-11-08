@@ -102,6 +102,7 @@ def test_flood_fill_paints_all():
 
     class _Canvas:
         def update_cell(self, *a): pass
+        def update_cells(self, cells): pass
         def render_frame(self, *a): pass
 
     class _History:
@@ -138,6 +139,7 @@ def test_flood_fill_respects_boundary():
 
     class _Canvas:
         def update_cell(self, *a): pass
+        def update_cells(self, cells): pass
         def render_frame(self, *a): pass
 
     class _History:

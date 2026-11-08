@@ -557,17 +557,22 @@ class App(QMainWindow):
     def goto_first_frame(self): self._goto_frame(1)
     def goto_last_frame(self):  self._goto_frame(self.doc.frameCount)
 
+    # Las cachés del lienzo van por índice de frame: insertar o borrar uno
+    # desplaza los índices, así que se avisa con "frames_changed".
     def add_frame(self):
         self.doc.add_empty_frame()
+        self.bus.emit("frames_changed", None)
         self._goto_frame(self.doc.frameCount)
 
     def duplicate_frame(self):
         self.doc.duplicate_current_frame()
+        self.bus.emit("frames_changed", None)
         self._refresh_timeline()
         self.canvas_widget.render_frame()
 
     def delete_frame(self):
         self.doc.delete_frame()
+        self.bus.emit("frames_changed", None)
         self._goto_frame(self.doc.currentFrameNumber)
 
     def _refresh_timeline(self):

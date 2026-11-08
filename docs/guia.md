@@ -80,9 +80,10 @@ construida con PySide6/Qt6, basada en el motor de archivos y paletas de
 - Python ≥ 3.11
 - PySide6 ≥ 6.6
 - Pillow ≥ 10
+- NumPy ≥ 1.24 (el lienzo y la exportación se rasterizan con NumPy: ADR 0002)
 
 ```bash
-pip install PySide6 Pillow
+pip install PySide6 Pillow numpy
 python main.py
 ```
 
@@ -241,7 +242,7 @@ El build produce un AppImage de ~51 MB con Python 3.11 y Qt 6.11.1 incluidos.
 ```bash
 # 1. Preparar entorno Python 3.11
 python3.11 -m venv .venv311
-.venv311/bin/pip install nuitka PySide6 Pillow
+.venv311/bin/pip install nuitka PySide6 Pillow numpy
 
 # 2. Compilar
 .venv311/bin/python -m nuitka \

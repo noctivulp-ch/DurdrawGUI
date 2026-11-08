@@ -19,6 +19,9 @@ class _Opts:
         self.sizeY = h
 
 
+_EMPTY_PAIR = [7, 0]   # compartido por todas las celdas vacías del compuesto
+
+
 class _CompositeFrame:
     """Frame virtual resultado de fundir capas. Solo lectura (no pertenece a ninguna capa)."""
     __slots__ = ("content", "newColorMap", "width", "height")
@@ -129,27 +132,35 @@ class Document:
     # ── Composición ───────────────────────────────────────────────────────
 
     def composite_frame(self, frame_idx=None):
-        """Funde todas las capas visibles. frame_idx=None → frame actual."""
+        """Funde todas las capas visibles. frame_idx=None → frame actual.
+
+        Se resuelve de arriba abajo: cada celda se queda con la primera capa
+        opaca y no mira las de debajo (la mitad de trabajo con 10 capas). Los
+        pares [fg, bg] del resultado son los de las capas, sin copiar: crear
+        16 080 listas por frame disparaba el recolector de basura sobre todo el
+        documento. Solo lectura. Cifras en docs/pendientes/rust-modulos.md."""
         if frame_idx is None:
             frame_idx = self._frame_idx
-
-        content  = [[" "] * self.width for _ in range(self.height)]
-        colormap = [[[7, 0]] * self.width for _ in range(self.height)]
-
-        for layer in self._layers:
-            if not layer.visible:
-                continue
-            if frame_idx >= len(layer.frames):
-                continue
-            src = layer.frame_at(frame_idx)
-            for r in range(self.height):
-                for c in range(self.width):
-                    ch = src.content[r][c]
-                    fg, bg = src.newColorMap[r][c]
-                    if ch != " " or bg != 0:
-                        content[r][c]  = ch
-                        colormap[r][c] = [fg, bg]
-
+        w = self.width
+        srcs = [layer.frame_at(frame_idx) for layer in reversed(self._layers)
+                if layer.visible and frame_idx < len(layer.frames)]
+        content, colormap = [], []
+        for r in range(self.height):
+            rows = [(s.content[r], s.newColorMap[r]) for s in srcs]
+            out_c = [" "] * w
+            out_m = [None] * w
+            for c in range(w):
+                for crow, mrow in rows:
+                    ch = crow[c]
+                    p = mrow[c]
+                    if ch != " " or p[1] != 0:
+                        out_c[c] = ch
+                        out_m[c] = p   # compartido: los pares no se mutan (core/grid_copy.py)
+                        break
+                else:
+                    out_m[c] = _EMPTY_PAIR
+            content.append(out_c)
+            colormap.append(out_m)
         return _CompositeFrame(content, colormap, self.width, self.height)
 
     def has_extended_colors(self) -> bool:

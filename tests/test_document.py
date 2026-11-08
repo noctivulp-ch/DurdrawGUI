@@ -192,3 +192,24 @@ def test_composite_frame_idx_param():
     doc.goto_frame(1)
     comp = doc.composite_frame(frame_idx=1)
     assert comp.content[0][0] == "B"
+
+
+def test_round_trip_durg_dos_capas_tres_frames_mismo_compuesto():
+    """Rev-1: el compuesto de cada frame sobrevive a guardar y cargar .durg."""
+    doc = Document(10, 5)
+    doc.add_layer(name="Arriba")
+    doc.add_empty_frame()
+    doc.add_empty_frame()
+    for fi in range(3):
+        base, top = doc.layers[0].frame_at(fi), doc.layers[1].frame_at(fi)
+        base.content[fi][fi] = "B"
+        base.newColorMap[fi][fi] = [2, 4]
+        top.content[fi][fi + 1] = "T"
+        top.newColorMap[fi][fi + 1] = [5, 0]
+        top.newColorMap[4][fi] = [1, 6]          # espacio con fondo: opaco
+    doc2 = from_durg(to_durg(doc))
+    assert doc2.frameCount == 3 and len(doc2.layers) == 2
+    for fi in range(3):
+        a, b = doc.composite_frame(fi), doc2.composite_frame(fi)
+        assert a.content == b.content
+        assert a.newColorMap == b.newColorMap

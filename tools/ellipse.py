@@ -1,7 +1,7 @@
 import math
-from copy import deepcopy
 import core.log as log
 from core.tool_registry import register
+from core.grid_copy import copy_content, copy_colors
 
 _log = log.get("tools")
 
@@ -47,24 +47,24 @@ class EllipseTool:
         frame = self.app.current_frame()
         ch = self.app.fg_char
         fg, bg = self.app.fg_color, self.app.bg_color
-        snap_c = deepcopy(frame.content)
-        snap_m = deepcopy(frame.newColorMap)
+        snap_c = copy_content(frame.content)
+        snap_m = copy_colors(frame.newColorMap)
         for c, r in cells:
             if 0 <= c < frame.width and 0 <= r < frame.height:
                 frame.content[r][c] = ch
                 frame.newColorMap[r][c] = [fg, bg]
         self.app.canvas_widget.render_frame(frame)
-        new_c = deepcopy(frame.content)
-        new_m = deepcopy(frame.newColorMap)
+        new_c = copy_content(frame.content)
+        new_m = copy_colors(frame.newColorMap)
 
         def undo():
-            frame.content = deepcopy(snap_c)
-            frame.newColorMap = deepcopy(snap_m)
+            frame.content = copy_content(snap_c)
+            frame.newColorMap = copy_colors(snap_m)
             self.app.canvas_widget.render_frame(frame)
 
         def redo():
-            frame.content = deepcopy(new_c)
-            frame.newColorMap = deepcopy(new_m)
+            frame.content = copy_content(new_c)
+            frame.newColorMap = copy_colors(new_m)
             self.app.canvas_widget.render_frame(frame)
 
         self.app.history.push(undo, redo)

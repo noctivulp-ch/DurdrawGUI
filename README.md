@@ -40,7 +40,7 @@ añade una interfaz gráfica completa construida con Qt 6, nativa en Wayland y X
 ## Puesta en marcha
 
 ```bash
-pip install PySide6 Pillow
+pip install PySide6 Pillow numpy
 python main.py
 ```
 

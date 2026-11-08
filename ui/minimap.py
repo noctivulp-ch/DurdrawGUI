@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from PySide6.QtGui   import QColor, QImage, QPainter, QPen
 from PySide6.QtCore  import QRect, Qt
 
@@ -63,7 +64,8 @@ class MinimapOverlay:
         panel_h = int(self._config.get("minimap_max_h", 160))
 
         if self._image is None:
-            self._image = self._rebuild(doc, svc, panel_w, panel_h)
+            cells = canvas.frame_cells(doc) if hasattr(canvas, "frame_cells") else None
+            self._image = self._rebuild(doc, svc, panel_w, panel_h, cells)
 
         img_w  = self._image.width()
         img_h  = self._image.height()
@@ -125,8 +127,14 @@ class MinimapOverlay:
 
     # ── Construcción de imagen ─────────────────────────────────────────
 
-    def _rebuild(self, doc, svc, panel_w: int, panel_h: int) -> QImage:
-        """Escala el lienzo para ajustarse al panel con relación de aspecto 1:2 (col:fila)."""
+    def _rebuild(self, doc, svc, panel_w: int, panel_h: int, cells=None) -> QImage:
+        """Escala el lienzo para ajustarse al panel con relación de aspecto 1:2 (col:fila).
+
+        cells: (códigos, fg, bg, caracteres) del frame actual, las matrices que
+        ya tiene el lienzo (core/raster.py). Sin ellas se compone el frame. El
+        muestreo es vectorizado: el bucle con setPixel por píxel costaba unos
+        15 ms en un 240×67 y se repetía en cada frame de la reproducción
+        (ADR 0002)."""
         # Los caracteres ASCII tienen altura ~2× su ancho: escalar Y en consecuencia.
         visual_h = doc.height * 2
         scale    = min(panel_w / doc.width, panel_h / visual_h)
@@ -136,33 +144,22 @@ class MinimapOverlay:
         cells_per_px_x = doc.width  / img_w
         cells_per_px_y = doc.height / img_h   # < cells_per_px_x por el ratio 1:2
 
-        # Composición una sola vez (O(w·h)) en lugar de composite_cell por píxel
-        # (O(w'·h'·capas)) — sobre 240×67 baja el rebuild de ~40 ms a pocos ms.
-        comp    = doc.composite_frame()
-        content = comp.content
-        cmap    = comp.newColorMap
+        if cells is None:
+            from core.raster import CharTable, composite_codes
+            table = CharTable()
+            codes, fg, bg = composite_codes(doc, doc.current_frame_idx, table)
+            chars = table.chars
+        else:
+            codes, fg, bg, chars = cells
+        empty_codes = [i for i, ch in enumerate(chars) if not ch or ch in _EMPTY_CHARS]
+        idx = np.where(np.isin(codes, empty_codes), bg, fg)
 
-        # Paleta pre-resuelta a int RGB: setPixel(int) evita construir un QColor
-        # por píxel (el otro cuello de botella del bucle en Python).
+        rows = np.minimum((np.arange(img_h) * cells_per_px_y).astype(np.int64), doc.height - 1)
+        cols = np.minimum((np.arange(img_w) * cells_per_px_x).astype(np.int64), doc.width - 1)
+
         n_pal = svc.count() if svc is not None else 16
-        pal   = [_qcolor(i, svc).rgb() for i in range(n_pal)]
+        pal   = np.array([_qcolor(i, svc).rgb() for i in range(n_pal)], dtype=np.uint32)
+        pix   = np.ascontiguousarray(pal[idx[rows][:, cols] % n_pal])
 
-        def rgb(idx):
-            return pal[idx % n_pal]
-
-        image = QImage(img_w, img_h, QImage.Format.Format_RGB32)
-
-        for py in range(img_h):
-            row = min(int(py * cells_per_px_y), doc.height - 1)
-            crow = content[row]
-            mrow = cmap[row]
-            for px in range(img_w):
-                col = min(int(px * cells_per_px_x), doc.width - 1)
-                ch  = crow[col]
-                fg_idx, bg_idx = mrow[col]
-                if ch and ch not in _EMPTY_CHARS:
-                    image.setPixel(px, py, rgb(fg_idx))
-                else:
-                    image.setPixel(px, py, rgb(bg_idx))
-
-        return image
+        image = QImage(pix.data, img_w, img_h, img_w * 4, QImage.Format.Format_RGB32)
+        return image.copy()   # la QImage no debe apuntar a memoria de NumPy que se libera

@@ -12,6 +12,7 @@ import os
 from core.document import Document, Layer
 from core.color_service import PALETTE_256
 import core.log as log
+from core.raster import CharTable, TileCache, composite_codes
 
 _log = log.get("io")
 
@@ -284,24 +285,116 @@ def _load_font():
     return ImageFont.load_default()
 
 
+_GLYPH_MASKS: dict = {}   # (id(font), carácter) → cobertura uint8 (_CELL_H, 1 + _CELL_W)
+
+
+def _glyph_mask(font, ch):
+    """Cobertura del carácter tal como lo deja draw.text() en una celda.
+
+    PIL rasterizaba el glifo en cada celda de cada frame (el 80 % de exportar un
+    GIF). Se dibuja una vez por carácter y fuente (ADR 0002). La columna 0 es lo
+    que el glifo desborda a la izquierda: hasta 1 px en DejaVu Sans Mono a 13 px
+    (los bloques y las líneas de caja), que caía sobre la celda anterior."""
+    key = (id(font), ch)
+    m = _GLYPH_MASKS.get(key)
+    if m is None:
+        import numpy as np
+        from PIL import Image, ImageDraw
+        img = Image.new("L", (1 + _CELL_W, _CELL_H), 0)
+        if ch not in (" ", "\x00", ""):
+            ImageDraw.Draw(img).text((1, 1), ch, fill=255, font=font)
+        m = _GLYPH_MASKS[key] = np.asarray(img, dtype=np.uint8)
+    return m
+
+
+def _pil_blend(dst, src, cov):
+    """BLEND + DIV255 de Pillow: dst·(255−cov) + src·cov, redondeado."""
+    v = dst * (255 - cov) + src * cov + 128
+    return ((v >> 8) + v) >> 8
+
+
+def _pack(rgb):
+    """(…, 3) int → uint32 0xFFRRGGBB."""
+    return (0xFF000000 | (rgb[..., 0] << 16) | (rgb[..., 1] << 8) | rgb[..., 2]).astype("uint32")
+
+
+def _unpack(px):
+    import numpy as np
+    px = px.astype(np.int64)
+    return np.stack([(px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF], axis=-1)
+
+
+def _render_tiles_pil(mask_idx, fg, bg, masks, pal):
+    """Baldosas de n celdas como las deja ImageDraw: rectángulo de fondo y
+    draw.text encima, con la mezcla de Pillow en los píxeles con antialiasing.
+    pal: (colores, 3) int. Devuelve uint32 0xFFRRGGBB."""
+    import numpy as np
+    cov = masks[mask_idx]                                          # (n, ch, cw) int
+    tfg, tbg = pal[fg], pal[bg]
+    out = np.where((cov >= 128)[..., None], tfg[:, None, None, :], tbg[:, None, None, :])
+    part = (cov > 0) & (cov < 255)
+    if part.any():
+        n_idx = np.nonzero(part)[0]
+        a = cov[part][:, None]
+        out[part] = _pil_blend(tbg[n_idx], tfg[n_idx], a)
+    return _pack(out)
+
+
+class _PilRaster:
+    """Estado de una exportación: tabla de caracteres, máscaras y baldosas que
+    se reaprovechan de un frame al siguiente (ADR 0002)."""
+
+    def __init__(self, font, color_format):
+        import numpy as np
+        self.font = font
+        self.table = CharTable()
+        self.pal = np.array(_RGB_256 if color_format == "256" else _RGB_256[:16], dtype=np.int64)
+        self.tiles = TileCache(_render_tiles_pil)
+        self._masks = None
+
+    def masks(self):
+        import numpy as np
+        chars = self.table.chars
+        if self._masks is None or len(self._masks) < len(chars):
+            self._masks = np.stack([_glyph_mask(self.font, ch) for ch in chars]).astype(np.int64)
+        return self._masks
+
+    def image(self, codes, fg, bg):
+        """PIL.Image RGB. Mismos píxeles que dibujar celda a celda con
+        ImageDraw, incluido el píxel que un glifo desborda sobre la celda de su
+        izquierda (tests/test_raster.py)."""
+        import numpy as np
+        from PIL import Image
+        h, w = codes.shape
+        m = self.masks()
+        fg = fg % len(self.pal)
+        img = self.tiles.image(codes, fg, bg, np.ascontiguousarray(m[:, :, 1:]), self.pal)
+        # Desborde a la izquierda: la celda c pinta su texto después que la c−1.
+        if w > 1:
+            over = m[codes[:, 1:], :, 0]                            # (h, w−1, ch)
+            r, c, y = np.nonzero(over)
+            if len(r):
+                ys, px = r * _CELL_H + y, c * _CELL_W + _CELL_W - 1
+                a = over[r, c, y][:, None]
+                img[ys, px] = _pack(_pil_blend(_unpack(img[ys, px]), self.pal[fg[r, c + 1]], a))
+        return Image.frombuffer("RGB", (w * _CELL_W, h * _CELL_H), img, "raw", "BGRX", 0, 1)
+
+
 def _frame_to_pil(frame, font, color_format="16"):
-    """Convierte un frame compuesto en una imagen PIL.Image RGB."""
-    from PIL import Image, ImageDraw
-    img = Image.new("RGB", (frame.width * _CELL_W, frame.height * _CELL_H))
-    draw = ImageDraw.Draw(img)
-    for row in range(frame.height):
-        for col in range(frame.width):
-            ch     = frame.content[row][col]
-            fg, bg = frame.newColorMap[row][col]
-            x0 = col * _CELL_W
-            y0 = row * _CELL_H
-            draw.rectangle(
-                [x0, y0, x0 + _CELL_W - 1, y0 + _CELL_H - 1],
-                fill=_palette_rgb(bg, color_format),
-            )
-            if ch not in (" ", "\x00"):
-                draw.text((x0, y0 + 1), ch, fill=_palette_rgb(fg, color_format), font=font)
-    return img
+    """Convierte un frame compuesto (content + newColorMap) en una imagen RGB."""
+    import numpy as np
+    r = _PilRaster(font, color_format)
+    codes = np.array([[r.table.code(ch) for ch in row] for row in frame.content], dtype=np.int64)
+    pairs = np.array([[p[:2] for p in row] for row in frame.newColorMap], dtype=np.int64)
+    return r.image(codes, pairs[..., 0], pairs[..., 1])
+
+
+def _doc_frames_pil(doc, font, color_format):
+    """Imágenes RGB de todos los frames compuestos, sin pasar por listas."""
+    r = _PilRaster(font, color_format)
+    for i in range(doc.frameCount):
+        codes, fg, bg = composite_codes(doc, i, r.table)
+        yield r.image(codes, fg, bg)
 
 
 def _gif_palette_image(color_format):
@@ -349,7 +442,7 @@ def export_gif(doc, path, frame_delay_ms=100):
     from PIL import Image
     font = _load_font()
     cfmt = doc.color_format
-    pil_frames = [_frame_to_pil(doc.composite_frame(i), font, cfmt) for i in range(doc.frameCount)]
+    pil_frames = list(_doc_frames_pil(doc, font, cfmt))
     # Paleta EXACTA a partir de la paleta conocida del documento (≤256 colores).
     # Cuantizar contra ella (sin dithering) mapea cada píxel a su color real en
     # todos los frames, evitando la distorsión de fijar la paleta al frame 0.
@@ -381,10 +474,7 @@ def export_mp4(doc, path, fps=10):
 
     font   = _load_font()
     cfmt   = doc.color_format
-    frames = [
-        np.asarray(_frame_to_pil(doc.composite_frame(i), font, cfmt))
-        for i in range(doc.frameCount)
-    ]
+    frames = [np.asarray(img) for img in _doc_frames_pil(doc, font, cfmt)]
     # H.264 exige dimensiones pares. Con las celdas actuales (8×16) el tamaño ya
     # es par, pero rellenamos 1px por si el tamaño de celda cambia en el futuro.
     def _pad_even(arr):
